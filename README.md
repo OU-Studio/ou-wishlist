@@ -16,7 +16,7 @@ If you have an existing Remix app that you want to upgrade to React Router, plea
 
 Before you begin, you'll need to [download and install the Shopify CLI](https://shopify.dev/docs/apps/tools/cli/getting-started) if you haven't already.
 
-### Setup
+### Setup 
 
 ```shell
 shopify app init --template=https://github.com/Shopify/shopify-app-template-react-router
