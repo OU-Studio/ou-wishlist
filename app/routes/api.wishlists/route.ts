@@ -1,4 +1,4 @@
-import  shopify  from "../../shopify.server";
+import  shopify from "../../shopify.server";
 import  prisma  from "../../db.server";
 
 
@@ -92,8 +92,9 @@ export async function action({ request }: { request: Request }) {
     return Response.json({ error: "Invalid JSON body" }, { status: 400 });
   }
 
-  const rawName = typeof body?.name === "string" ? body.name : "";
-  const name = rawName.trim();
+  const form = await request.formData();
+const rawName = form.get("name");
+const name = typeof rawName === "string" ? rawName.trim() : "";
 
   if (!name) {
     return Response.json({ error: "Wishlist name is required" }, { status: 400 });

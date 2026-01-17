@@ -87,6 +87,14 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 export default function Index() {
   const fetcher = useFetcher<typeof action>();
 
+  const wishlistFetcher = useFetcher();
+const createWishlist = () =>
+  wishlistFetcher.submit(
+    { name: "My first wishlist" },
+    { method: "POST", action: "/api/wishlists" }
+  );
+
+
   const shopify = useAppBridge();
   const isLoading =
     ["loading", "submitting"].includes(fetcher.state) &&
@@ -146,6 +154,23 @@ export default function Index() {
           >
             Generate a product
           </s-button>
+
+          <s-button
+  onClick={createWishlist}
+  variant="secondary"
+  {...(wishlistFetcher.state !== "idle" ? { loading: true } : {})}
+>
+  Create wishlist (test)
+</s-button>
+{wishlistFetcher.data && (
+  <s-box padding="base" borderWidth="base" borderRadius="base" background="subdued">
+    <pre style={{ margin: 0 }}>
+      <code>{JSON.stringify(wishlistFetcher.data, null, 2)}</code>
+    </pre>
+  </s-box>
+)}
+
+
           {fetcher.data?.product && (
             <s-button
               onClick={() => {
