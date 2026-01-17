@@ -33,3 +33,95 @@ model Session {
   refreshToken        String?
   refreshTokenExpires DateTime?
 }
+
+model Shop {
+  id        String   @id @default(cuid())
+  shop      String   @unique // outesting1.myshopify.com
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  customers   Customer[]
+  wishlists   Wishlist[]
+  submissions WishlistSubmission[]
+}
+
+model Customer {
+  id         String   @id @default(cuid())
+  shopId     String
+  customerId String
+  email      String?
+  firstName  String?
+  lastName   String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  shop       Shop       @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  wishlists  Wishlist[]
+  submissions WishlistSubmission[]
+
+  @@unique([shopId, customerId])
+  @@index([shopId])
+}
+
+
+model Wishlist {
+  id          String   @id @default(cuid())
+  shopId      String
+  customerId  String
+  name        String
+  isArchived  Boolean  @default(false)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  shop     Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  items       WishlistItem[]
+  submissions WishlistSubmission[]
+
+  @@unique([customerId, name])
+  @@index([shopId])
+  @@index([customerId])
+}
+
+model WishlistItem {
+  id                 String   @id @default(cuid())
+  wishlistId         String
+  productId          String   // Shopify product id
+  variantId          String   // Shopify variant id
+  quantity           Int      @default(1)
+  title              String?  // optional snapshot (nice for admin UI)
+  variantTitle       String?
+  handle             String?
+  sku                String?
+  imageUrl           String?
+  price              String?  // store as string to avoid currency issues
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  wishlist Wishlist @relation(fields: [wishlistId], references: [id], onDelete: Cascade)
+
+  @@unique([wishlistId, variantId])
+  @@index([wishlistId])
+}
+
+model WishlistSubmission {
+  id            String   @id @default(cuid())
+  shopId        String
+  wishlistId    String
+  customerId    String
+  status        String   @default("created") // created|failed|cancelled (extend later)
+  draftOrderId  String?  // Shopify DraftOrder ID
+  note          String?  // customer note at submission time
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  shop     Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+  wishlist Wishlist @relation(fields: [wishlistId], references: [id], onDelete: Cascade)
+  customer Customer @relation(fields: [customerId], references: [id], onDelete: Cascade)
+
+  @@index([shopId])
+  @@index([wishlistId])
+  @@index([customerId])
+}
+
