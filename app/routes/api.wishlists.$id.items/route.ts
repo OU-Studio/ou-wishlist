@@ -1,8 +1,9 @@
 import prisma from "../../db.server";
-import { getShopCustomerAdmin, readBody, asString, asInt } from "../../utils/api.server";
+import { readBody, asString, asInt } from "../../utils/api.server";
+import { resolveCustomerIdentity } from "../../utils/identity.server";
 
 export async function action({ request, params }: { request: Request; params: { id?: string } }) {
-  const { shop, customer } = await getShopCustomerAdmin(request);
+  const { shop, customer } = await resolveCustomerIdentity(request);
   const wishlistId = params.id;
 
   if (!wishlistId) return Response.json({ error: "Missing id" }, { status: 400 });

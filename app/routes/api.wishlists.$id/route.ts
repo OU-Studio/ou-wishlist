@@ -1,8 +1,9 @@
 import prisma from "../../db.server";
-import { getShopCustomerAdmin, readBody, asString } from "../../utils/api.server";
+import { readBody, asString } from "../../utils/api.server";
+import { resolveCustomerIdentity } from "../../utils/identity.server";
 
 export async function loader({ request, params }: { request: Request; params: { id?: string } }) {
-  const { shop, customer } = await getShopCustomerAdmin(request);
+  const { shop, customer } = await resolveCustomerIdentity(request);
   const id = params.id;
 
   if (!id) return Response.json({ error: "Missing id" }, { status: 400 });
@@ -38,7 +39,7 @@ export async function loader({ request, params }: { request: Request; params: { 
 }
 
 export async function action({ request, params }: { request: Request; params: { id?: string } }) {
-  const { shop, customer } = await getShopCustomerAdmin(request);
+  const { shop, customer } = await resolveCustomerIdentity(request);
   const id = params.id;
 
   if (!id) return Response.json({ error: "Missing id" }, { status: 400 });

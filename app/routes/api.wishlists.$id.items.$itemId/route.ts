@@ -1,5 +1,6 @@
 import prisma from "../../db.server";
-import { getShopCustomerAdmin, readBody, asInt } from "../../utils/api.server";
+import { readBody, asInt } from "../../utils/api.server";
+import { resolveCustomerIdentity } from "../../utils/identity.server";
 
 export async function action({
   request,
@@ -8,7 +9,7 @@ export async function action({
   request: Request;
   params: { id?: string; itemId?: string };
 }) {
-  const { shop, customer } = await getShopCustomerAdmin(request);
+  const { shop, customer } = await resolveCustomerIdentity(request);
   const wishlistId = params.id;
   const itemId = params.itemId;
 

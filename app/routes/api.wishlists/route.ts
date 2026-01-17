@@ -1,8 +1,9 @@
 import prisma from "../../db.server";
-import { getShopCustomerAdmin, readBody, asString } from "../../utils/api.server";
+import {  readBody, asString } from "../../utils/api.server";
+import { resolveCustomerIdentity } from "../../utils/identity.server";
 
 export async function loader({ request }: { request: Request }) {
-  const { shop, customer } = await getShopCustomerAdmin(request);
+  const { shop, customer } = await resolveCustomerIdentity(request);
 
   const wishlists = await prisma.wishlist.findMany({
     where: { shopId: shop.id, customerId: customer.id, isArchived: false },
@@ -14,7 +15,7 @@ export async function loader({ request }: { request: Request }) {
 }
 
 export async function action({ request }: { request: Request }) {
-  const { shop, customer } = await getShopCustomerAdmin(request);
+  const { shop, customer } = await resolveCustomerIdentity(request);
 
   const body = await readBody(request);
   const name = asString(body.name);
