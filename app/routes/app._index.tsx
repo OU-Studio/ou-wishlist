@@ -96,6 +96,20 @@ export default function Index() {
   );
 };
 
+const addItem = () => {
+  const shop = new URLSearchParams(window.location.search).get("shop") || "";
+  const wishlistId = "cmki71igf0004pb36mukz6b0w"; // temp
+  wishlistFetcher.submit(
+    {
+      productId: "gid://shopify/Product/123",
+      variantId: "gid://shopify/ProductVariant/456",
+      quantity: "1",
+    },
+    { method: "POST", action: `/api/wishlists/${wishlistId}/items?shop=${encodeURIComponent(shop)}` }
+  );
+};
+
+
 
 
   const shopify = useAppBridge();
@@ -164,6 +178,21 @@ export default function Index() {
             {...(wishlistFetcher.state !== "idle" ? { loading: true } : {})}
           >
             Create wishlist (test)
+          </s-button>
+          {wishlistFetcher.data && (
+            <s-box padding="base" borderWidth="base" borderRadius="base" background="subdued">
+              <pre style={{ margin: 0 }}>
+                <code>{JSON.stringify(wishlistFetcher.data, null, 2)}</code>
+              </pre>
+            </s-box>
+          )}
+
+          <s-button
+            onClick={addItem}
+            variant="secondary"
+            {...(wishlistFetcher.state !== "idle" ? { loading: true } : {})}
+          >
+            Add Item (test)
           </s-button>
           {wishlistFetcher.data && (
             <s-box padding="base" borderWidth="base" borderRadius="base" background="subdued">
