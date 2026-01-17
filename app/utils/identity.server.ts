@@ -40,34 +40,30 @@ export type AdminIdentity = {
   admin: any;
 };
 
-export async function resolveCustomerIdentity(
-  request: Request
-): Promise<CustomerIdentity> {
-  const { sessionToken, cors } =
-    await authenticate.public.customerAccount(request);
+export async function resolveCustomerIdentity(request: Request): Promise<CustomerIdentity> {
+  const { sessionToken, cors } = await authenticate.public.customerAccount(request);
 
-  // token.dest is sometimes missing in the customer accounts editor/preview,
-  // so we accept an explicit ?shop= fallback from the extension request.
   const shopDomain =
     shopFromDest((sessionToken as any).dest) || shopFromQuery(request);
 
   if (!shopDomain) {
-    throw new Response(
-      JSON.stringify({ error: "Missing shop (token.dest empty and no ?shop=)" }),
-      { status: 401 }
-    );
+    throw new Error("Missing shop (token.dest empty and no ?shop=)");
   }
 
   const customerGid =
-    typeof (sessionToken as any).sub === "string"
-      ? ((sessionToken as any).sub as string)
-      : null;
+    typeof (sessionToken as any).sub === "string" ? ((sessionToken as any).sub as string) : null;
 
   if (!customerGid) {
-    throw new Response(
-      JSON.stringify({ error: "Not authenticated as customer (missing token.sub)" }),
-      { status: 401 }
-    );
+    // TEMP: log the token shape so we can see what claims exist (don’t log full JWT)
+    console.log("[customerAccount token keys]", Object.keys(sessionToken as any));
+    console.log("[customerAccount token]", {
+      iss: (sessionToken as any).iss,
+      dest: (sessionToken as any).dest,
+      aud: (sessionToken as any).aud,
+      sub: (sessionToken as any).sub,
+    });
+
+    throw new Error("Missing customer id in token (token.sub not present)");
   }
 
   const customerId = customerGid.replace("gid://shopify/Customer/", "");
@@ -86,6 +82,7 @@ export async function resolveCustomerIdentity(
 
   return { type: "customer", shop, customer, cors };
 }
+
 
 export async function resolveAdminIdentity(
   request: Request
