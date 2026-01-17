@@ -1,40 +1,44 @@
 import prisma from "../../db.server";
-import { readBody, asString } from "../../utils/api.server";
+import { readBody } from "../../utils/api.server";
 import { resolveCustomerIdentity } from "../../utils/identity.server";
 
 const API_VERSION = "2025-10";
+const EXT_ORIGIN = "https://extensions.shopifycdn.com";
+
+function allowOrigin(request: Request) {
+  const origin = request.headers.get("Origin") || "";
+  return origin === EXT_ORIGIN ? origin : "*";
+}
+
+function corsHeaders(request: Request) {
+  return {
+    "Access-Control-Allow-Origin": allowOrigin(request),
+    Vary: "Origin",
+    "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  } as Record<string, string>;
+}
 
 function corsJson(request: Request, data: unknown, status = 200) {
-  const origin = request.headers.get("Origin") || "";
-  const allowOrigin = origin === "https://extensions.shopifycdn.com" ? origin : "*";
   return new Response(JSON.stringify(data), {
     status,
     headers: {
       "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": allowOrigin,
-      Vary: "Origin",
-      "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+      ...corsHeaders(request),
     },
   });
 }
 
 function corsNoContent(request: Request) {
-  const origin = request.headers.get("Origin") || "";
-  const allowOrigin = origin === "https://extensions.shopifycdn.com" ? origin : "*";
   return new Response(null, {
     status: 204,
-    headers: {
-      "Access-Control-Allow-Origin": allowOrigin,
-      Vary: "Origin",
-      "Access-Control-Allow-Methods": "GET,POST,OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    },
+    headers: corsHeaders(request),
   });
 }
 
 function asGid(kind: "Product" | "ProductVariant", idOrGid: string) {
   const s = String(idOrGid || "").trim();
+  if (!s) return null;
   if (s.startsWith("gid://")) return s;
   return `gid://shopify/${kind}/${s}`;
 }
@@ -56,8 +60,13 @@ async function adminGraphql(shop: string, accessToken: string, query: string, va
     },
     body: JSON.stringify({ query, variables }),
   });
-  const json = await res.json();
-  return json;
+  return res.json();
+}
+
+export async function loader({ request }: { request: Request }) {
+  // CORS preflight often hits loader in some setups
+  if (request.method === "OPTIONS") return corsNoContent(request);
+  return corsJson(request, { ok: true }, 200);
 }
 
 export async function action({ request }: { request: Request }) {
@@ -65,14 +74,18 @@ export async function action({ request }: { request: Request }) {
 
   try {
     const identity = await resolveCustomerIdentity(request);
-    if (request.method !== "POST") return corsJson(request, { error: "Method not allowed" }, 405);
+
+    if (request.method !== "POST") {
+      return corsJson(request, { error: "Method not allowed" }, 405);
+    }
 
     const body = await readBody(request);
+
     const productIdsRaw = Array.isArray(body.productIds) ? body.productIds : [];
     const variantIdsRaw = Array.isArray(body.variantIds) ? body.variantIds : [];
 
-    const productIds = productIdsRaw.map((x: any) => asGid("Product", String(x)));
-    const variantIds = variantIdsRaw.map((x: any) => asGid("ProductVariant", String(x)));
+    const productIds = productIdsRaw.map((x: any) => asGid("Product", String(x))).filter(Boolean);
+    const variantIds = variantIdsRaw.map((x: any) => asGid("ProductVariant", String(x))).filter(Boolean);
 
     const token = await getOfflineToken(identity.shop.shop);
     if (!token) return corsJson(request, { error: "Missing offline access token for shop" }, 500);
@@ -83,7 +96,6 @@ export async function action({ request }: { request: Request }) {
           ... on Product {
             id
             title
-            handle
             featuredImage { url altText }
           }
         }
