@@ -8,55 +8,66 @@ export default async () => {
   render(<Extension />, document.body);
 };
 
+function shopFromDest(dest) {
+  if (!dest) return null;
+  try {
+    return new URL(dest).host;
+  } catch {
+    return String(dest).replace(/^https?:\/\//, "").replace(/\/$/, "");
+  }
+}
+
+async function getShopFromSessionToken() {
+  // customer account template exposes this
+  const token = await shopify.sessionToken.get();
+  const payload = JSON.parse(atob(token.split(".")[1]));
+  return shopFromDest(payload?.dest);
+}
+
 function Extension() {
+  const customerGid = shopify?.authenticatedAccount?.customer?.value?.id;
+
   const [out, setOut] = useState("idle");
 
-  const customerGid = shopify?.authenticatedAccount?.customer?.value?.id;
-  const customerId = customerGid
-    ? customerGid.replace("gid://shopify/Customer/", "")
-    : null;
+  useEffect(() => {
+    (async () => {
+      try {
+        const shopDomain = await getShopFromSessionToken();
+        const url = `${API_BASE}/api/wishlists?shop=${encodeURIComponent(shopDomain || "")}`;
 
-  const [status, setStatus] = useState("loading");
-  const [count, setCount] = useState(null);
-  const [error, setError] = useState(null);
+        const res = await fetch(url);
+        const text = await res.text().catch(() => "");
 
- useEffect(() => {
-  if (!customerGid) return;
-
-  (async () => {
-    try {
-      const res = await fetch(`${API_BASE}/api/wishlists`, { method: "GET" });
-
-      const text = await res.text().catch(() => "");
-      const preview = text.slice(0, 200);
-
-      setOut(JSON.stringify(
-        { status: res.status, ok: res.ok, bodyPreview: preview },
-        null,
-        2
-      ));
-    } catch (e) {
-      setOut(String(e));
-    }
-  })();
-}, [customerGid]);
-
+        setOut(
+          JSON.stringify(
+            {
+              shopDomain,
+              status: res.status,
+              ok: res.ok,
+              bodyPreview: text.slice(0, 200),
+              hasCustomerGid: Boolean(customerGid),
+            },
+            null,
+            2
+          )
+        );
+      } catch (e) {
+        setOut(String(e));
+      }
+    })();
+  }, []);
 
   return (
     <s-page>
       <s-section>
         <s-banner>
-          <s-text>Customer ID: {customerId ?? "Not authenticated"}</s-text>
+          <s-text>Customer: {customerGid ? "yes" : "no"}</s-text>
         </s-banner>
       </s-section>
 
       <s-section>
-        {status === "loading" && <s-text>Loading wishlists…</s-text>}
-        {status === "ok" && <s-text>Wishlists found: {count}</s-text>}
-        {status === "error" && <s-text>Error: {error}</s-text>}
+        <s-text>{out}</s-text>
       </s-section>
-
-      <s-text>{out}</s-text>
     </s-page>
   );
 }
