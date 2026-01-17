@@ -2,84 +2,99 @@ import prisma from "../../db.server";
 import { readBody, asString } from "../../utils/api.server";
 import { resolveCustomerIdentity } from "../../utils/identity.server";
 
-export async function loader({ request, params }: { request: Request; params: { id?: string } }) {
-  const { shop, customer } = await resolveCustomerIdentity(request);
-  const id = params.id;
+function corsJson(request: Request, data: unknown, status = 200) {
+  const origin = request.headers.get("Origin") || "";
+  const allowOrigin =
+    origin === "https://extensions.shopifycdn.com" ? origin : "*";
 
-  if (!id) return Response.json({ error: "Missing id" }, { status: 400 });
-
-  const wishlist = await prisma.wishlist.findFirst({
-    where: { id, shopId: shop.id, customerId: customer.id, isArchived: false },
-    select: {
-      id: true,
-      name: true,
-      createdAt: true,
-      updatedAt: true,
-      items: {
-        orderBy: { createdAt: "desc" },
-        select: {
-          id: true,
-          productId: true,
-          variantId: true,
-          quantity: true,
-          title: true,
-          variantTitle: true,
-          sku: true,
-          imageUrl: true,
-          price: true,
-          createdAt: true,
-          updatedAt: true,
-        },
-      },
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: {
+      "Content-Type": "application/json",
+      "Access-Control-Allow-Origin": allowOrigin,
+      "Vary": "Origin",
+      "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
     },
   });
+}
 
-  if (!wishlist) return Response.json({ error: "Wishlist not found" }, { status: 404 });
-  return Response.json({ wishlist }, { status: 200 });
+function corsNoContent(request: Request) {
+  const origin = request.headers.get("Origin") || "";
+  const allowOrigin =
+    origin === "https://extensions.shopifycdn.com" ? origin : "*";
+
+  return new Response(null, {
+    status: 204,
+    headers: {
+      "Access-Control-Allow-Origin": allowOrigin,
+      "Vary": "Origin",
+      "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
+      "Access-Control-Allow-Headers": "Content-Type, Authorization",
+    },
+  });
+}
+
+export async function loader({ request, params }: { request: Request; params: { id?: string } }) {
+  if (request.method === "OPTIONS") return corsNoContent(request);
+
+  try {
+    const identity = await resolveCustomerIdentity(request);
+    const id = params.id;
+
+    if (!id) return corsJson(request, { error: "Missing id" }, 400);
+
+    const wishlist = await prisma.wishlist.findFirst({
+      where: { id, shopId: identity.shop.id, customerId: identity.customer.id, isArchived: false },
+      include: { items: { orderBy: { createdAt: "desc" } } },
+    });
+
+    if (!wishlist) return corsJson(request, { error: "Wishlist not found" }, 404);
+
+    return corsJson(request, { wishlist }, 200);
+  } catch (e: any) {
+    return corsJson(request, { error: e?.message || "Unauthorized" }, 401);
+  }
 }
 
 export async function action({ request, params }: { request: Request; params: { id?: string } }) {
-  const { shop, customer } = await resolveCustomerIdentity(request);
-  const id = params.id;
+  if (request.method === "OPTIONS") return corsNoContent(request);
 
-  if (!id) return Response.json({ error: "Missing id" }, { status: 400 });
+  try {
+    const identity = await resolveCustomerIdentity(request);
+    const id = params.id;
 
-  const wishlist = await prisma.wishlist.findFirst({
-    where: { id, shopId: shop.id, customerId: customer.id, isArchived: false },
-    select: { id: true },
-  });
-  if (!wishlist) return Response.json({ error: "Wishlist not found" }, { status: 404 });
+    if (!id) return corsJson(request, { error: "Missing id" }, 400);
 
-  const method = request.method.toUpperCase();
+    if (request.method === "PATCH") {
+      const body = await readBody(request);
+      const name = (asString(body.name) || "").trim();
 
-  if (method === "PATCH") {
-    const body = await readBody(request);
-    const name = asString(body.name);
-    if (!name) return Response.json({ error: "Wishlist name is required" }, { status: 400 });
-    if (name.length > 80) return Response.json({ error: "Wishlist name must be 80 chars or less" }, { status: 400 });
+      if (!name) return corsJson(request, { error: "Wishlist name is required" }, 400);
 
-    try {
-      const updated = await prisma.wishlist.update({
-        where: { id },
+      const updated = await prisma.wishlist.updateMany({
+        where: { id, shopId: identity.shop.id, customerId: identity.customer.id, isArchived: false },
         data: { name },
-        select: { id: true, name: true, createdAt: true, updatedAt: true },
       });
-      return Response.json({ wishlist: updated }, { status: 200 });
-    } catch (err: any) {
-      if (err?.code === "P2002") {
-        return Response.json({ error: "A wishlist with that name already exists" }, { status: 409 });
-      }
-      throw err;
+
+      if (!updated.count) return corsJson(request, { error: "Wishlist not found" }, 404);
+
+      return corsJson(request, { ok: true }, 200);
     }
-  }
 
-  if (method === "DELETE") {
-    await prisma.wishlist.update({
-      where: { id },
-      data: { isArchived: true },
-    });
-    return Response.json({ ok: true }, { status: 200 });
-  }
+    if (request.method === "DELETE") {
+      const updated = await prisma.wishlist.updateMany({
+        where: { id, shopId: identity.shop.id, customerId: identity.customer.id, isArchived: false },
+        data: { isArchived: true },
+      });
 
-  return Response.json({ error: "Method not allowed" }, { status: 405 });
+      if (!updated.count) return corsJson(request, { error: "Wishlist not found" }, 404);
+
+      return corsJson(request, { ok: true }, 200);
+    }
+
+    return corsJson(request, { error: "Method not allowed" }, 405);
+  } catch (e: any) {
+    return corsJson(request, { error: e?.message || "Unauthorized" }, 401);
+  }
 }
