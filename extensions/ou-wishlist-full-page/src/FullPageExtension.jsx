@@ -30,32 +30,42 @@ function Extension() {
   const [out, setOut] = useState("idle");
 
   useEffect(() => {
-    (async () => {
-      try {
-        const shopDomain = await getShopFromSessionToken();
-        const url = `${API_BASE}/api/wishlists?shop=${encodeURIComponent(shopDomain || "")}`;
+  if (!customerGid) return;
 
-        const res = await fetch(url);
-        const text = await res.text().catch(() => "");
+  (async () => {
+    try {
+      const shopDomain = await getShopFromSessionToken();
+      const url = `${API_BASE}/api/wishlists?shop=${encodeURIComponent(shopDomain || "")}`;
 
-        setOut(
-          JSON.stringify(
-            {
-              shopDomain,
-              status: res.status,
-              ok: res.ok,
-              bodyPreview: text.slice(0, 200),
-              hasCustomerGid: Boolean(customerGid),
-            },
-            null,
-            2
-          )
-        );
-      } catch (e) {
-        setOut(String(e));
-      }
-    })();
-  }, []);
+      const token = await shopify.sessionToken.get();
+
+      const res = await fetch(url, {
+        method: "GET",
+        headers: {
+          Authorization: `Bearer ${token}`,
+        },
+      });
+
+      const text = await res.text().catch(() => "");
+      setOut(
+        JSON.stringify(
+          {
+            shopDomain,
+            status: res.status,
+            ok: res.ok,
+            bodyPreview: text.slice(0, 200),
+            hasCustomerGid: Boolean(customerGid),
+          },
+          null,
+          2
+        )
+      );
+    } catch (e) {
+      setOut(String(e));
+    }
+  })();
+}, [customerGid]);
+
 
   return (
     <s-page>

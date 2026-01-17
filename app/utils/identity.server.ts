@@ -40,30 +40,36 @@ export type AdminIdentity = {
   admin: any;
 };
 
+function customerFromQuery(request: Request): string | null {
+  try {
+    const url = new URL(request.url);
+    const raw = url.searchParams.get("customerId");
+    return raw ? raw.trim() : null;
+  } catch {
+    return null;
+  }
+}
+
 export async function resolveCustomerIdentity(request: Request): Promise<CustomerIdentity> {
   const { sessionToken, cors } = await authenticate.public.customerAccount(request);
 
   const shopDomain =
     shopFromDest((sessionToken as any).dest) || shopFromQuery(request);
 
-  if (!shopDomain) {
-    throw new Error("Missing shop (token.dest empty and no ?shop=)");
-  }
+  if (!shopDomain) throw new Error("Missing shop");
 
-  const customerGid =
+  // Prefer token.sub, but fall back to explicit customerId from the extension
+  let customerGid =
     typeof (sessionToken as any).sub === "string" ? ((sessionToken as any).sub as string) : null;
 
-  if (!customerGid) {
-    // TEMP: log the token shape so we can see what claims exist (don’t log full JWT)
-    console.log("[customerAccount token keys]", Object.keys(sessionToken as any));
-    console.log("[customerAccount token]", {
-      iss: (sessionToken as any).iss,
-      dest: (sessionToken as any).dest,
-      aud: (sessionToken as any).aud,
-      sub: (sessionToken as any).sub,
-    });
+  const customerIdFromReq = customerFromQuery(request);
 
-    throw new Error("Missing customer id in token (token.sub not present)");
+  if (!customerGid && customerIdFromReq) {
+    customerGid = `gid://shopify/Customer/${customerIdFromReq}`;
+  }
+
+  if (!customerGid) {
+    throw new Error("Missing customer id (token.sub not present and no customerId provided)");
   }
 
   const customerId = customerGid.replace("gid://shopify/Customer/", "");
