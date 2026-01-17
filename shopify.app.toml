@@ -2,7 +2,7 @@
 
 client_id = "e6faa890d9ec4c4cef60aa548282751f"
 name = "OU Wishlist"
-application_url = "https://example.com"
+application_url = "https://ou-wishlist.up.railway.app"
 embedded = true
 
 [build]
@@ -25,4 +25,7 @@ api_version = "2026-04"
 scopes = "read_customers,read_draft_orders,write_draft_orders"
 
 [auth]
-redirect_urls = [ "https://example.com/api/auth" ]
+redirect_urls = [
+  "https://ou-wishlist.up.railway.app/api/auth/callback",
+  "https://ou-wishlist.up.railway.app/api/auth/oauth/callback"
+]
