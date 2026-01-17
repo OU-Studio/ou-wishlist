@@ -26,6 +26,5 @@ scopes = "read_customers,read_draft_orders,write_draft_orders"
 
 [auth]
 redirect_urls = [
-  "https://ou-wishlist-production.up.railway.app/api/auth/callback",
-  "https://ou-wishlist-production.up.railway.app/api/auth/oauth/callback"
+  "https://ou-wishlist-production.up.railway.app/api/auth/callback"
 ]
