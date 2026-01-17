@@ -43,19 +43,15 @@ function asGid(kind: "Product" | "ProductVariant", idOrGid: string) {
   return `gid://shopify/${kind}/${s}`;
 }
 
-async function getOfflineToken(shop: string) {
-  const offline = await prisma.session.findFirst({
-    where: { shop, isOnline: false },
-    select: { accessToken: true },
-  });
-  if (offline?.accessToken) return offline.accessToken;
-
-  const any = await prisma.session.findFirst({
+async function getAnyToken(shop: string) {
+  const sess = await prisma.session.findFirst({
     where: { shop },
-    select: { accessToken: true },
+    select: { accessToken: true, isOnline: true, scope: true },
   });
-  return any?.accessToken || null;
+
+  return sess?.accessToken || null;
 }
+
 
 
 async function adminGraphql(shop: string, accessToken: string, query: string, variables: any) {
@@ -68,12 +64,6 @@ async function adminGraphql(shop: string, accessToken: string, query: string, va
     body: JSON.stringify({ query, variables }),
   });
   return res.json();
-}
-
-export async function loader({ request }: { request: Request }) {
-  // CORS preflight often hits loader in some setups
-  if (request.method === "OPTIONS") return corsNoContent(request);
-  return corsJson(request, { ok: true }, 200);
 }
 
 export async function action({ request }: { request: Request }) {
@@ -94,7 +84,7 @@ export async function action({ request }: { request: Request }) {
     const productIds = productIdsRaw.map((x: any) => asGid("Product", String(x))).filter(Boolean);
     const variantIds = variantIdsRaw.map((x: any) => asGid("ProductVariant", String(x))).filter(Boolean);
 
-    const token = await getOfflineToken(identity.shop.shop);
+    const token = await getAnyToken(identity.shop.shop);
     if (!token) return corsJson(request, { error: "Missing offline access token for shop" }, 500);
 
     const gql = `#graphql
@@ -138,4 +128,32 @@ export async function action({ request }: { request: Request }) {
   } catch (e: any) {
     return corsJson(request, { error: e?.message || "Unauthorized" }, 401);
   }
+}
+
+export async function loader({ request }: { request: Request }) {
+  if (request.method === "OPTIONS") return corsNoContent(request);
+
+  const url = new URL(request.url);
+  const shop = url.searchParams.get("shop") || "";
+  const sess = shop
+    ? await prisma.session.findMany({
+        where: { shop },
+        select: { id: true, shop: true, isOnline: true, scope: true, expires: true, accessToken: true },
+        take: 5,
+      })
+    : [];
+
+  return corsJson(request, {
+    ok: true,
+    shop,
+    sessionCount: sess.length,
+    sessions: sess.map((s) => ({
+      id: s.id,
+      shop: s.shop,
+      isOnline: s.isOnline,
+      scope: s.scope,
+      expires: s.expires,
+      hasAccessToken: !!s.accessToken,
+    })),
+  });
 }
