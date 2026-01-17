@@ -83,6 +83,15 @@ function Extension() {
   const [submitting, setSubmitting] = useState(false);
   const [submitResult, setSubmitResult] = useState(null);
 
+/** @type {[{productMap: Record<string, any>, variantMap: Record<string, any>}, (v: any) => void]} */
+const [lookup, setLookup] = useState({
+  productMap: {},
+  variantMap: {},
+});
+
+  
+
+
   const baseParams = useMemo(() => {
     return { shop: shopDomain || "", customerId: customerId || "" };
   }, [shopDomain, customerId]);
@@ -140,21 +149,51 @@ function Extension() {
   }
 
   async function loadWishlistDetail(id) {
-    try {
-      setLoadingDetail(true);
-      setDetailError(null);
-      setSubmitResult(null);
-      if (!shopDomain) await loadShop();
-      const json = await apiFetch(`/api/wishlists/${id}`);
-      const wl = json.wishlist || json;
-      setActiveWishlist(wl);
-      setRenameValue(wl?.name || "");
-    } catch (e) {
-      setDetailError(String(e?.message || e));
-    } finally {
-      setLoadingDetail(false);
+  try {
+    setLoadingDetail(true);
+    setDetailError(null);
+    setSubmitResult(null);
+
+    if (!shopDomain) await loadShop();
+
+    // 1️⃣ Load wishlist + items
+    const json = await apiFetch(`/api/wishlists/${id}`);
+    const wl = json.wishlist || json;
+
+    setActiveWishlist(wl);
+    setRenameValue(wl?.name || "");
+
+    // 2️⃣ Enrich items (product + variant metadata)
+    const items = Array.isArray(wl?.items) ? wl.items : [];
+
+    const productIds = items
+      .map((i) => i.productId)
+      .filter(Boolean);
+
+    const variantIds = items
+      .map((i) => i.variantId)
+      .filter(Boolean);
+
+    if (productIds.length || variantIds.length) {
+      const meta = await apiFetch("/api/lookup", {
+        method: "POST",
+        body: {
+          productIds,
+          variantIds,
+        },
+      });
+
+      setLookup(meta); // { productMap, variantMap }
+    } else {
+      setLookup({ productMap: {}, variantMap: {} });
     }
+  } catch (e) {
+    setDetailError(String(e?.message || e));
+  } finally {
+    setLoadingDetail(false);
   }
+}
+
 
   async function createWishlist() {
     const trimmed = asText(newName).trim();
@@ -382,8 +421,30 @@ function Extension() {
               {items.map((it) => (
                 <s-list-item key={it.id}>
                   <s-stack direction="block" gap="base">
-                    <s-text>Product: {it.productId}</s-text>
-                    <s-text>Variant: {it.variantId}</s-text>
+                    {(() => {
+  const pGid = String(it.productId || "").startsWith("gid://")
+    ? it.productId
+    : `gid://shopify/Product/${it.productId}`;
+  const vGid = String(it.variantId || "").startsWith("gid://")
+    ? it.variantId
+    : `gid://shopify/ProductVariant/${it.variantId}`;
+
+  const v = lookup?.variantMap?.[vGid];
+  const p = lookup?.productMap?.[pGid];
+
+  const title = v?.product?.title || p?.title || `Product ${it.productId}`;
+  const variantTitle = v?.title && v.title !== "Default Title" ? v.title : null;
+  const price = v?.price ? `£${v.price}` : null;
+
+  return (
+    <s-stack direction="block" gap="base">
+      <s-text>{title}</s-text>
+      {variantTitle && <s-text>{variantTitle}</s-text>}
+      {price && <s-text>{price}</s-text>}
+    </s-stack>
+  );
+})()}
+
                     <s-text>Qty: {it.quantity}</s-text>
 
                     <s-stack direction="inline" gap="base">
