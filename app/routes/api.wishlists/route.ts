@@ -54,13 +54,9 @@ export async function loader({ request }: { request: Request }) {
     // Always return explicit CORS headers for customer account requests
     return corsJson(request, { wishlists }, 200);
   } catch (e: any) {
-    // Never redirect; always return JSON + CORS so the extension can read it
-    const msg =
-      e instanceof Response
-        ? "Unauthorized"
-        : e?.message || "Unauthorized";
-    return corsJson(request, { error: msg }, 401);
-  }
+  return corsJson(request, { error: e?.message || "Unauthorized" }, 401);
+}
+
 }
 
 export async function action({ request }: { request: Request }) {
@@ -94,11 +90,8 @@ export async function action({ request }: { request: Request }) {
 
     return corsJson(request, { wishlist }, 201);
   } catch (e: any) {
-    const msg =
-      e instanceof Response
-        ? "Unauthorized"
-        : e?.message || "Unauthorized";
-    return corsJson(request, { error: msg }, 401);
-  }
+  return corsJson(request, { error: e?.message || "Unauthorized" }, 401);
+}
+
 }
  
