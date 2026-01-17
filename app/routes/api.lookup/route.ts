@@ -44,12 +44,19 @@ function asGid(kind: "Product" | "ProductVariant", idOrGid: string) {
 }
 
 async function getOfflineToken(shop: string) {
-  const sess = await prisma.session.findFirst({
+  const offline = await prisma.session.findFirst({
     where: { shop, isOnline: false },
     select: { accessToken: true },
   });
-  return sess?.accessToken || null;
+  if (offline?.accessToken) return offline.accessToken;
+
+  const any = await prisma.session.findFirst({
+    where: { shop },
+    select: { accessToken: true },
+  });
+  return any?.accessToken || null;
 }
+
 
 async function adminGraphql(shop: string, accessToken: string, query: string, variables: any) {
   const res = await fetch(`https://${shop}/admin/api/${API_VERSION}/graphql.json`, {
