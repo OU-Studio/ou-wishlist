@@ -88,11 +88,14 @@ export default function Index() {
   const fetcher = useFetcher<typeof action>();
 
   const wishlistFetcher = useFetcher();
-const createWishlist = () =>
+ const createWishlist = () => {
+  const shop = new URLSearchParams(window.location.search).get("shop") || "";
   wishlistFetcher.submit(
     { name: "My first wishlist" },
-    { method: "POST", action: "/api/wishlists" }
+    { method: "POST", action: `/api/wishlists?shop=${encodeURIComponent(shop)}` }
   );
+};
+
 
 
   const shopify = useAppBridge();
@@ -156,19 +159,19 @@ const createWishlist = () =>
           </s-button>
 
           <s-button
-  onClick={createWishlist}
-  variant="secondary"
-  {...(wishlistFetcher.state !== "idle" ? { loading: true } : {})}
->
-  Create wishlist (test)
-</s-button>
-{wishlistFetcher.data && (
-  <s-box padding="base" borderWidth="base" borderRadius="base" background="subdued">
-    <pre style={{ margin: 0 }}>
-      <code>{JSON.stringify(wishlistFetcher.data, null, 2)}</code>
-    </pre>
-  </s-box>
-)}
+            onClick={createWishlist}
+            variant="secondary"
+            {...(wishlistFetcher.state !== "idle" ? { loading: true } : {})}
+          >
+            Create wishlist (test)
+          </s-button>
+          {wishlistFetcher.data && (
+            <s-box padding="base" borderWidth="base" borderRadius="base" background="subdued">
+              <pre style={{ margin: 0 }}>
+                <code>{JSON.stringify(wishlistFetcher.data, null, 2)}</code>
+              </pre>
+            </s-box>
+          )}
 
 
           {fetcher.data?.product && (
