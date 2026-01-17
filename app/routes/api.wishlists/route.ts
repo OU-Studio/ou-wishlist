@@ -25,6 +25,16 @@ async function upsertCustomer(params: {
   });
 }
 
+function getPlaceholderCustomerKey(session: any) {
+  const userId = session.onlineAccessInfo?.associated_user?.id;
+  if (userId) return String(userId);
+
+  // Offline session fallback (stable per shop)
+  // Good enough until we implement real customer auth.
+  return `offline:${session.shop}`;
+}
+
+
 export async function loader({ request }: { request: Request }) {
   const { session } = await shopify.authenticate.admin(request);
 
@@ -32,12 +42,10 @@ export async function loader({ request }: { request: Request }) {
   const shop = await upsertShop(shopDomain);
 
   // TEMP (admin user as placeholder identity)
-  const user = session.onlineAccessInfo?.associated_user;
-  const customerKey = user?.id ? String(user.id) : null;
+  const customerKey = getPlaceholderCustomerKey(session);
 
-  if (!customerKey) {
-    return Response.json({ wishlists: [] }, { status: 200 });
-  }
+const user = session.onlineAccessInfo?.associated_user;
+
 
   const customer = await upsertCustomer({
     shopId: shop.id,
