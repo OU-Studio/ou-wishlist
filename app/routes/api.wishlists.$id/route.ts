@@ -1,51 +1,8 @@
-import { authenticate } from "../../shopify.server";
 import prisma from "../../db.server";
+import { getShopCustomerAdmin, readBody, asString } from "../../utils/api.server";
 
-function getPlaceholderCustomerKey(session: any) {
-  const userId = session.onlineAccessInfo?.associated_user?.id;
-  if (userId) return String(userId);
-  return `offline:${session.shop}`;
-}
-
-async function getShopAndCustomer(request: Request) {
-  const { session } = await authenticate.admin(request);
-
-  const shop = await prisma.shop.upsert({
-    where: { shop: session.shop },
-    update: {},
-    create: { shop: session.shop },
-  });
-
-  const customerKey = getPlaceholderCustomerKey(session);
-  const user = session.onlineAccessInfo?.associated_user;
-
-  const customer = await prisma.customer.upsert({
-    where: { shopId_customerId: { shopId: shop.id, customerId: customerKey } },
-    update: {
-      email: user?.email ?? undefined,
-      firstName: user?.first_name ?? undefined,
-      lastName: user?.last_name ?? undefined,
-    },
-    create: {
-      shopId: shop.id,
-      customerId: customerKey,
-      email: user?.email ?? null,
-      firstName: user?.first_name ?? null,
-      lastName: user?.last_name ?? null,
-    },
-  });
-
-  return { shop, customer };
-}
-
-export async function loader({
-  request,
-  params,
-}: {
-  request: Request;
-  params: { id?: string };
-}) {
-  const { shop, customer } = await getShopAndCustomer(request);
+export async function loader({ request, params }: { request: Request; params: { id?: string } }) {
+  const { shop, customer } = await getShopCustomerAdmin(request);
   const id = params.id;
 
   if (!id) return Response.json({ error: "Missing id" }, { status: 400 });
@@ -76,67 +33,52 @@ export async function loader({
     },
   });
 
-  if (!wishlist) {
-    return Response.json({ error: "Wishlist not found" }, { status: 404 });
-  }
-
+  if (!wishlist) return Response.json({ error: "Wishlist not found" }, { status: 404 });
   return Response.json({ wishlist }, { status: 200 });
 }
 
-// POST /api/wishlists/:id/items
-export async function action({
-  request,
-  params,
-}: {
-  request: Request;
-  params: { id?: string };
-}) {
-  const { shop, customer } = await getShopAndCustomer(request);
-  const wishlistId = params.id;
+export async function action({ request, params }: { request: Request; params: { id?: string } }) {
+  const { shop, customer } = await getShopCustomerAdmin(request);
+  const id = params.id;
 
-  if (!wishlistId) return Response.json({ error: "Missing id" }, { status: 400 });
+  if (!id) return Response.json({ error: "Missing id" }, { status: 400 });
 
-  // Ensure wishlist belongs to customer
   const wishlist = await prisma.wishlist.findFirst({
-    where: { id: wishlistId, shopId: shop.id, customerId: customer.id, isArchived: false },
+    where: { id, shopId: shop.id, customerId: customer.id, isArchived: false },
     select: { id: true },
   });
+  if (!wishlist) return Response.json({ error: "Wishlist not found" }, { status: 404 });
 
-  if (!wishlist) {
-    return Response.json({ error: "Wishlist not found" }, { status: 404 });
+  const method = request.method.toUpperCase();
+
+  if (method === "PATCH") {
+    const body = await readBody(request);
+    const name = asString(body.name);
+    if (!name) return Response.json({ error: "Wishlist name is required" }, { status: 400 });
+    if (name.length > 80) return Response.json({ error: "Wishlist name must be 80 chars or less" }, { status: 400 });
+
+    try {
+      const updated = await prisma.wishlist.update({
+        where: { id },
+        data: { name },
+        select: { id: true, name: true, createdAt: true, updatedAt: true },
+      });
+      return Response.json({ wishlist: updated }, { status: 200 });
+    } catch (err: any) {
+      if (err?.code === "P2002") {
+        return Response.json({ error: "A wishlist with that name already exists" }, { status: 409 });
+      }
+      throw err;
+    }
   }
 
-  const form = await request.formData();
-  const variantId = form.get("variantId");
-  const productId = form.get("productId");
-  const qty = form.get("quantity");
-
-  const variantIdStr = typeof variantId === "string" ? variantId.trim() : "";
-  const productIdStr = typeof productId === "string" ? productId.trim() : "";
-  const quantity = typeof qty === "string" ? parseInt(qty, 10) : 1;
-
-  if (!variantIdStr || !productIdStr) {
-    return Response.json({ error: "productId and variantId are required" }, { status: 400 });
-  }
-  if (!Number.isFinite(quantity) || quantity < 1 || quantity > 999) {
-    return Response.json({ error: "quantity must be 1..999" }, { status: 400 });
-  }
-
-  try {
-    const item = await prisma.wishlistItem.upsert({
-      where: { wishlistId_variantId: { wishlistId, variantId: variantIdStr } },
-      update: { quantity: { increment: quantity } },
-      create: {
-        wishlistId,
-        productId: productIdStr,
-        variantId: variantIdStr,
-        quantity,
-      },
-      select: { id: true, productId: true, variantId: true, quantity: true, createdAt: true, updatedAt: true },
+  if (method === "DELETE") {
+    await prisma.wishlist.update({
+      where: { id },
+      data: { isArchived: true },
     });
-
-    return Response.json({ item }, { status: 201 });
-  } catch (err: any) {
-    throw err;
+    return Response.json({ ok: true }, { status: 200 });
   }
+
+  return Response.json({ error: "Method not allowed" }, { status: 405 });
 }
