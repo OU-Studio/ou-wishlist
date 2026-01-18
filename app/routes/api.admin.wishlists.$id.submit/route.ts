@@ -2,46 +2,37 @@ import prisma from "../../db.server";
 import { readBody, asString } from "../../utils/api.server";
 import { resolveCustomerIdentity } from "../../utils/identity.server";
 
+const EXT_ORIGIN = "https://extensions.shopifycdn.com";
 const API_VERSION = "2025-10";
 
-function corsJson(request: Request, data: unknown, status = 200) {
+function allowOrigin(request: Request) {
   const origin = request.headers.get("Origin") || "";
-  const allowOrigin = origin === "https://extensions.shopifycdn.com" ? origin : "*";
+  return origin === EXT_ORIGIN ? origin : "*";
+}
+
+function corsHeaders(request: Request) {
+  return {
+    "Access-Control-Allow-Origin": allowOrigin(request),
+    Vary: "Origin",
+    "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
+    "Access-Control-Allow-Headers": "Content-Type, Authorization",
+  } as Record<string, string>;
+}
+
+function corsJson(request: Request, data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: {
-      "Content-Type": "application/json",
-      "Access-Control-Allow-Origin": allowOrigin,
-      Vary: "Origin",
-      "Access-Control-Allow-Methods": "POST,OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    },
+    headers: { "Content-Type": "application/json", ...corsHeaders(request) },
   });
 }
 
 function corsNoContent(request: Request) {
-  const origin = request.headers.get("Origin") || "";
-  const allowOrigin = origin === "https://extensions.shopifycdn.com" ? origin : "*";
-  return new Response(null, {
-    status: 204,
-    headers: {
-      "Access-Control-Allow-Origin": allowOrigin,
-      Vary: "Origin",
-      "Access-Control-Allow-Methods": "POST,OPTIONS",
-      "Access-Control-Allow-Headers": "Content-Type, Authorization",
-    },
-  });
+  return new Response(null, { status: 204, headers: corsHeaders(request) });
 }
 
-function asVariantGid(idOrGid: string) {
-  const s = String(idOrGid || "").trim();
-  if (s.startsWith("gid://")) return s;
-  return `gid://shopify/ProductVariant/${s}`;
-}
-
-async function getOfflineToken(shop: string) {
+async function getAnyToken(shop: string) {
   const sess = await prisma.session.findFirst({
-    where: { shop, isOnline: false },
+    where: { shop },
     select: { accessToken: true },
   });
   return sess?.accessToken || null;
@@ -56,20 +47,39 @@ async function adminGraphql(shop: string, accessToken: string, query: string, va
     },
     body: JSON.stringify({ query, variables }),
   });
-  return res.json();
+
+  const json = await res.json();
+  return { ok: res.ok, status: res.status, json };
 }
 
-export async function action({ request, params }: { request: Request; params: { id?: string } }) {
+export async function loader({ request }: { request: Request }) {
+  if (request.method === "OPTIONS") return corsNoContent(request);
+  return corsJson(request, { error: "Method not allowed" }, 405);
+}
+
+export async function action({
+  request,
+  params,
+}: {
+  request: Request;
+  params: { id?: string };
+}) {
   if (request.method === "OPTIONS") return corsNoContent(request);
 
   try {
     const identity = await resolveCustomerIdentity(request);
     const wishlistId = params.id;
+
     if (!wishlistId) return corsJson(request, { error: "Missing id" }, 400);
     if (request.method !== "POST") return corsJson(request, { error: "Method not allowed" }, 405);
 
     const wishlist = await prisma.wishlist.findFirst({
-      where: { id: wishlistId, shopId: identity.shop.id, customerId: identity.customer.id, isArchived: false },
+      where: {
+        id: wishlistId,
+        shopId: identity.shop.id,
+        customerId: identity.customer.id,
+        isArchived: false,
+      },
       include: { items: true },
     });
 
@@ -79,11 +89,11 @@ export async function action({ request, params }: { request: Request; params: { 
     const body = await readBody(request);
     const note = (asString(body.note) || "").trim();
 
-    const token = await getOfflineToken(identity.shop.shop);
-    if (!token) return corsJson(request, { error: "Missing offline access token for shop" }, 500);
+    const token = await getAnyToken(identity.shop.shop);
+    if (!token) return corsJson(request, { error: "Missing access token for shop" }, 500);
 
-    const lineItems = wishlist.items.map((i: any) => ({
-      variantId: asVariantGid(i.variantId),
+    const lineItems = wishlist.items.map((i) => ({
+      variantId: i.variantId, // must be gid://shopify/ProductVariant/...
       quantity: i.quantity,
     }));
 
@@ -96,27 +106,57 @@ export async function action({ request, params }: { request: Request; params: { 
       }
     `;
 
-    const result = await adminGraphql(identity.shop.shop, token, gql, {
+    const draftNote = [
+      `Wishlist: ${wishlist.id} (${wishlist.name})`,
+      note ? `Customer note: ${note}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    const { json } = await adminGraphql(identity.shop.shop, token, gql, {
       input: {
-        note: [
-          `Wishlist: ${wishlist.id} (${wishlist.name})`,
-          note ? `Customer note: ${note}` : null,
-        ].filter(Boolean).join("\n"),
+        note: draftNote,
         tags: [`wishlist:${wishlist.id}`, `wishlistName:${wishlist.name}`],
         lineItems,
       },
     });
 
-    const errs = result?.data?.draftOrderCreate?.userErrors || [];
-    if (errs.length) {
+    if (json?.errors?.length) {
       const submission = await prisma.wishlistSubmission.create({
-        data: { shopId: identity.shop.id, wishlistId: wishlist.id, customerId: identity.customer.id, status: "failed", note: note || null },
+        data: {
+          shopId: identity.shop.id,
+          wishlistId: wishlist.id,
+          customerId: identity.customer.id,
+          status: "failed",
+          note: note || null,
+        },
         select: { id: true, status: true, draftOrderId: true, createdAt: true },
       });
-      return corsJson(request, { error: "Draft order create failed", userErrors: errs, submission }, 400);
+
+      return corsJson(request, { error: "GraphQL error", errors: json.errors, submission }, 400);
     }
 
-    const draftOrderId = result?.data?.draftOrderCreate?.draftOrder?.id as string | undefined;
+    const userErrors = json?.data?.draftOrderCreate?.userErrors ?? [];
+    if (userErrors.length) {
+      const submission = await prisma.wishlistSubmission.create({
+        data: {
+          shopId: identity.shop.id,
+          wishlistId: wishlist.id,
+          customerId: identity.customer.id,
+          status: "failed",
+          note: note || null,
+        },
+        select: { id: true, status: true, draftOrderId: true, createdAt: true },
+      });
+
+      return corsJson(
+        request,
+        { error: "Draft order create failed", userErrors, submission },
+        400
+      );
+    }
+
+    const draftOrderId = json?.data?.draftOrderCreate?.draftOrder?.id ?? null;
 
     const submission = await prisma.wishlistSubmission.create({
       data: {
@@ -124,7 +164,7 @@ export async function action({ request, params }: { request: Request; params: { 
         wishlistId: wishlist.id,
         customerId: identity.customer.id,
         status: "created",
-        draftOrderId: draftOrderId ?? null,
+        draftOrderId,
         note: note || null,
       },
       select: { id: true, status: true, draftOrderId: true, createdAt: true },

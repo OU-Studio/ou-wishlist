@@ -389,27 +389,33 @@ async function removeItem(itemId) {
 }
 
   async function submitForQuote() {
-    if (!activeId) return;
-    try {
-      setSubmitting(true);
-      setDetailError(null);
-      setSubmitResult(null);
+  if (!activeId) return;
 
-      const note = asText(submitNote).trim();
+  try {
+    setSubmitting(true);
+    setDetailError(null);
+    setSubmitResult(null);
 
-      const json = await apiFetch(`/api/wishlists/${activeId}/submit`, {
-        method: "POST",
-        body: { note: note || undefined },
-      });
+    const res = await apiFetch(`/api/wishlists/${activeId}/submit`, {
+      
+      method: "POST",
+      body: { note: submitNote || "" }, // if you have a note field; otherwise remove
+    });
+    console.log("submit response", res);
 
-      setSubmitResult(json);
-      await loadWishlistDetail(activeId);
-    } catch (e) {
-      setDetailError(String(e?.message || e));
-    } finally {
-      setSubmitting(false);
-    }
+
+    // res = { submission }
+    setSubmitResult(res?.submission || res);
+
+    // Optional: refresh detail (so you can show submission history later)
+    await loadWishlistDetail(activeId);
+  } catch (e) {
+    setDetailError(String(e?.message || e));
+  } finally {
+    setSubmitting(false);
   }
+}
+
 
   function openWishlist(id) {
     setActiveId(id);
@@ -644,6 +650,15 @@ async function removeItem(itemId) {
             </s-button>
 
             {submitResult && <s-text>Submitted: {JSON.stringify(submitResult).slice(0, 180)}</s-text>}
+
+            {submitResult && (
+  <s-banner tone="success">
+    <s-text>
+      Submitted: {submitResult.id} • Status: {submitResult.status}
+    </s-text>
+  </s-banner>
+)}
+
           </s-stack>
         </s-section>
       </s-page>
