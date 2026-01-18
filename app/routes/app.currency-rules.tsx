@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
-import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
+import { useMemo, useState } from "react";
+import type { LoaderFunctionArgs } from "react-router";
 import { useFetcher, useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
+import prisma from "../db.server";
 
 type Rule = {
   id: string;
@@ -10,20 +11,36 @@ type Rule = {
   updatedAt: string;
 };
 
+function getText(input: any): string {
+  // s-text-field typically sends an event
+  if (typeof input === "string") return input;
+  const v1 = input?.target?.value;
+  if (v1 != null) return String(v1);
+  const v2 = input?.detail?.value;
+  if (v2 != null) return String(v2);
+  return String(input ?? "");
+}
+
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
 
-  const res = await fetch(
-    new URL(`/api/admin/market-currency-rules?shop=${encodeURIComponent(session.shop)}`, request.url),
-    { headers: { Cookie: request.headers.get("Cookie") || "" } }
-  );
+  const shop = await prisma.shop.upsert({
+    where: { shop: session.shop },
+    update: {},
+    create: { shop: session.shop },
+  });
 
-  const data = await res.json();
-  return data;
+  const rules = await prisma.marketCurrencyRule.findMany({
+    where: { shopId: shop.id },
+    orderBy: { updatedAt: "desc" },
+    select: { id: true, countryCode: true, currency: true, updatedAt: true },
+  });
+
+  return { rules, shopDomain: session.shop };
 }
 
 export default function CurrencyRulesPage() {
-  const data = useLoaderData() as { rules: Rule[] };
+  const data = useLoaderData() as { rules: Rule[]; shopDomain: string };
   const fetcher = useFetcher();
 
   const [countryCode, setCountryCode] = useState("");
@@ -31,18 +48,25 @@ export default function CurrencyRulesPage() {
 
   const saving = fetcher.state !== "idle";
 
+  // ensure we always include ?shop=... for admin auth
+  const actionUrl = useMemo(() => {
+    const shop = data.shopDomain;
+    return `/api/admin/market-currency-rules?shop=${encodeURIComponent(shop)}`;
+  }, [data.shopDomain]);
+
   function submitUpsert() {
     fetcher.submit(
-      { intent: "upsert", countryCode: countryCode.trim(), currency: currency.trim() },
-      { method: "post", action: "/api/admin/market-currency-rules" }
+      {
+        intent: "upsert",
+        countryCode: countryCode.trim().toUpperCase(),
+        currency: currency.trim().toUpperCase(),
+      },
+      { method: "post", action: actionUrl }
     );
   }
 
   function submitDelete(id: string) {
-    fetcher.submit(
-      { intent: "delete", id },
-      { method: "post", action: "/api/admin/market-currency-rules" }
-    );
+    fetcher.submit({ intent: "delete", id }, { method: "post", action: actionUrl });
   }
 
   return (
@@ -52,12 +76,12 @@ export default function CurrencyRulesPage() {
           <s-text-field
             label="Country code"
             value={countryCode}
-            onChange={(v) => setCountryCode(String(v).toUpperCase())}
+            onChange={(e) => setCountryCode(getText(e).toUpperCase())}
           />
           <s-text-field
             label="Currency"
             value={currency}
-            onChange={(v) => setCurrency(String(v).toUpperCase())}
+            onChange={(e) => setCurrency(getText(e).toUpperCase())}
           />
           <s-button
             variant="primary"
@@ -83,6 +107,7 @@ export default function CurrencyRulesPage() {
                   <s-text>
                     <strong>{r.countryCode}</strong> → {r.currency}
                   </s-text>
+
                   <s-button
                     variant="secondary"
                     onClick={() => {
@@ -92,6 +117,7 @@ export default function CurrencyRulesPage() {
                   >
                     Edit
                   </s-button>
+
                   <s-button
                     variant="secondary"
                     onClick={() => submitDelete(r.id)}
