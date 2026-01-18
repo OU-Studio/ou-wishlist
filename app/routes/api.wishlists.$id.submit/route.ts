@@ -73,18 +73,137 @@ export async function action({
     const body = await readBody(request);
     const note = (asString(body.note) || "").trim();
 
+        // 1) Get shop access token from Sessions table
+    const sess = await prisma.session.findFirst({
+      where: { shop: identity.shop.shop },
+      select: { accessToken: true },
+    });
+    const accessToken = sess?.accessToken;
+
+    if (!accessToken) {
+      // record failure so you can see it in admin later
+      const submission = await prisma.wishlistSubmission.create({
+        data: {
+          shopId: identity.shop.id,
+          wishlistId: wishlist.id,
+          customerId: identity.customer.id,
+          status: "failed",
+          note: note || null,
+        },
+        select: { id: true, status: true, draftOrderId: true, createdAt: true },
+      });
+
+      return corsJson(
+        request,
+        { error: "Missing offline access token for shop", submission, _submitVersion: "draftOrderCreate-v1" },
+        500
+      );
+    }
+
+    // 2) Draft order line items (variantId must be a GID)
+    const lineItems = wishlist.items.map((i) => ({
+      variantId: i.variantId, // gid://shopify/ProductVariant/...
+      quantity: i.quantity,
+    }));
+
+    const gql = `#graphql
+      mutation CreateDraftOrder($input: DraftOrderInput!) {
+        draftOrderCreate(input: $input) {
+          draftOrder { id name }
+          userErrors { field message }
+        }
+      }
+    `;
+
+    const draftNote = [
+      `Wishlist: ${wishlist.id} (${wishlist.name})`,
+      note ? `Customer note: ${note}` : null,
+    ]
+      .filter(Boolean)
+      .join("\n");
+
+    // 3) Call Admin GraphQL directly
+    const res = await fetch(
+      `https://${identity.shop.shop}/admin/api/2025-10/graphql.json`,
+      {
+        method: "POST",
+        headers: {
+          "X-Shopify-Access-Token": accessToken,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: gql,
+          variables: {
+            input: {
+              note: draftNote,
+              tags: [`wishlist:${wishlist.id}`, `wishlistName:${wishlist.name}`],
+              lineItems,
+            },
+          },
+        }),
+      }
+    );
+
+    const json: any = await res.json();
+
+    // GraphQL-level errors
+    if (json?.errors?.length) {
+      const submission = await prisma.wishlistSubmission.create({
+        data: {
+          shopId: identity.shop.id,
+          wishlistId: wishlist.id,
+          customerId: identity.customer.id,
+          status: "failed",
+          note: note || null,
+        },
+        select: { id: true, status: true, draftOrderId: true, createdAt: true },
+      });
+
+      return corsJson(
+        request,
+        { error: "GraphQL error", errors: json.errors, submission, _submitVersion: "draftOrderCreate-v1" },
+        400
+      );
+    }
+
+    const userErrors = json?.data?.draftOrderCreate?.userErrors ?? [];
+    if (userErrors.length) {
+      const submission = await prisma.wishlistSubmission.create({
+        data: {
+          shopId: identity.shop.id,
+          wishlistId: wishlist.id,
+          customerId: identity.customer.id,
+          status: "failed",
+          note: note || null,
+        },
+        select: { id: true, status: true, draftOrderId: true, createdAt: true },
+      });
+
+      return corsJson(
+        request,
+        { error: "Draft order create failed", userErrors, submission, _submitVersion: "draftOrderCreate-v1" },
+        400
+      );
+    }
+
+    const draftOrderId = json?.data?.draftOrderCreate?.draftOrder?.id ?? null;
+
+    // 4) Record submission as created
     const submission = await prisma.wishlistSubmission.create({
       data: {
         shopId: identity.shop.id,
         wishlistId: wishlist.id,
         customerId: identity.customer.id,
-        status: "queued",
+        status: "created",
+        draftOrderId,
         note: note || null,
       },
       select: { id: true, status: true, draftOrderId: true, createdAt: true },
     });
 
-    return corsJson(request, { submission }, 201);
+    return corsJson(request, { submission, _submitVersion: "draftOrderCreate-v1" }, 201);
+
+
   } catch (e: any) {
     return corsJson(request, { error: e?.message || "Unauthorized" }, 401);
   }
