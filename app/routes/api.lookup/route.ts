@@ -112,7 +112,20 @@ export async function action({ request }: { request: Request }) {
       variantIds,
     });
 
-    if (out?.errors?.length) return corsJson(request, { error: "GraphQL error", errors: out.errors }, 400);
+    if (out?.errors?.length) {
+  return corsJson(
+    request,
+    {
+      error: "GraphQL error",
+      errors: out.errors,
+      shop: identity.shop.shop,
+      productIds,
+      variantIds,
+    },
+    400
+  );
+}
+
 
     const products = (out?.data?.products || []).filter(Boolean);
     const variants = (out?.data?.variants || []).filter(Boolean);
