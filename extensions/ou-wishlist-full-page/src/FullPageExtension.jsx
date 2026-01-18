@@ -235,21 +235,27 @@ const [lookup, setLookup] = useState({
     }
   }
 
-  async function deleteWishlist() {
-    if (!activeId) return;
-    try {
-      setDeleting(true);
-      setDetailError(null);
-      await apiFetch(`/api/wishlists/${activeId}`, { method: "DELETE" });
-      setActiveId(null);
-      setActiveWishlist(null);
-      await loadWishlists();
-    } catch (e) {
-      setDetailError(String(e?.message || e));
-    } finally {
-      setDeleting(false);
-    }
+ async function deleteWishlist() {
+  if (!activeId) return;
+  try {
+    setDeleting(true);
+    setDetailError(null);
+
+    await apiFetch(`/api/wishlists/${activeId}`, { method: "DELETE" });
+
+    // clear detail view first so UI doesn't try to re-render stale ids
+    setActiveId(null);
+    setActiveWishlist(null);
+    setRenameValue("");
+    setSubmitResult(null);
+
+    await loadWishlists();
+  } catch (e) {
+    setDetailError(String(e?.message || e));
+  } finally {
+    setDeleting(false);
   }
+}
 
   async function addItem() {
     if (!activeId) return;
@@ -288,30 +294,63 @@ const [lookup, setLookup] = useState({
   }
 
   async function updateItemQty(itemId, nextQty) {
-    if (!activeId) return;
-    const qty = Math.max(1, parseInt(String(nextQty), 10) || 1);
-    try {
-      setDetailError(null);
-      await apiFetch(`/api/wishlists/${activeId}/items/${itemId}`, {
-        method: "PATCH",
-        body: { quantity: qty },
-      });
-      await loadWishlistDetail(activeId);
-    } catch (e) {
-      setDetailError(String(e?.message || e));
-    }
-  }
+  if (!activeId) return;
 
-  async function removeItem(itemId) {
-    if (!activeId) return;
+  const qty = Math.max(1, parseInt(String(nextQty), 10) || 1);
+
+  try {
+    setDetailError(null);
+
+    // optimistic UI update (optional but feels instant)
+    setActiveWishlist((prev) => {
+      if (!prev?.items) return prev;
+      return {
+        ...prev,
+        items: prev.items.map((it) => (it.id === itemId ? { ...it, quantity: qty } : it)),
+      };
+    });
+
+    await apiFetch(`/api/wishlists/${activeId}/items/${itemId}`, {
+      method: "PATCH",
+      body: { quantity: qty },
+    });
+
+    // re-sync from server (keeps lookup/enrichment consistent)
+    await loadWishlistDetail(activeId);
+  } catch (e) {
+    setDetailError(String(e?.message || e));
+    // if patch failed, revert by reloading
     try {
-      setDetailError(null);
-      await apiFetch(`/api/wishlists/${activeId}/items/${itemId}`, { method: "DELETE" });
       await loadWishlistDetail(activeId);
-    } catch (e) {
-      setDetailError(String(e?.message || e));
-    }
+    } catch {}
   }
+}
+
+async function removeItem(itemId) {
+  if (!activeId) return;
+
+  try {
+    setDetailError(null);
+
+    // optimistic remove
+    setActiveWishlist((prev) => {
+      if (!prev?.items) return prev;
+      return { ...prev, items: prev.items.filter((it) => it.id !== itemId) };
+    });
+
+    await apiFetch(`/api/wishlists/${activeId}/items/${itemId}`, {
+      method: "DELETE",
+    });
+
+    await loadWishlistDetail(activeId);
+  } catch (e) {
+    setDetailError(String(e?.message || e));
+    // revert by reloading
+    try {
+      await loadWishlistDetail(activeId);
+    } catch {}
+  }
+}
 
   async function submitForQuote() {
     if (!activeId) return;
