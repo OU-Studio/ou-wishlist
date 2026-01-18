@@ -45,11 +45,10 @@ function asGid(kind: "Product" | "ProductVariant", idOrGid: string) {
 
 async function getAnyToken(shop: string) {
   const sess = await prisma.session.findFirst({
-    where: { shop },
-    select: { accessToken: true, isOnline: true, scope: true },
-  });
-
-  return sess?.accessToken || null;
+  where: { shop },
+  select: { accessToken: true },
+});
+return sess?.accessToken || null;
 }
 
 
