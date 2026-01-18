@@ -43,6 +43,7 @@ model Shop {
   customers   Customer[]
   wishlists   Wishlist[]
   submissions WishlistSubmission[]
+  marketCurrencyRule MarketCurrencyRule[]
 }
 
 model Customer {
@@ -123,5 +124,19 @@ model WishlistSubmission {
   @@index([shopId])
   @@index([wishlistId])
   @@index([customerId])
+}
+
+model MarketCurrencyRule {
+  id          String   @id @default(cuid())
+  shopId      String
+  countryCode String   // e.g. "CA"
+  currency    String   // e.g. "USD"
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  shop     Shop     @relation(fields: [shopId], references: [id], onDelete: Cascade)
+
+  @@unique([shopId, countryCode])
+  @@index([shopId])
 }
 

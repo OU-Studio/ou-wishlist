@@ -8,6 +8,8 @@ export default async () => {
   render(<Extension />, document.body);
 };
 
+
+
 function shopFromDest(dest) {
   if (!dest) return null;
   try {
@@ -52,7 +54,19 @@ function asInt(v, fallback = 1) {
 
 function Extension() {
   const customerGid = shopify?.authenticatedAccount?.customer?.value?.id;
-  const customerId = customerGid ? customerGid.replace("gid://shopify/Customer/", "") : "";
+  const customerId = customerGid
+    ? customerGid.replace("gid://shopify/Customer/", "")
+    : null;
+
+  const country = shopify?.localization?.country;
+  const countryCode =
+    (country && "value" in country ? country.value?.isoCode : null) ??
+    // fallback if Shopify changes shape
+    (country && "isoCode" in country ? country.isoCode : null) ??
+    null;
+
+  // optional debug
+  console.log("countryCode", countryCode);
 
   const [shopDomain, setShopDomain] = useState(null);
 
@@ -84,48 +98,49 @@ function Extension() {
   const [submitResult, setSubmitResult] = useState(null);
 
   const [pickerOpen, setPickerOpen] = useState(false);
-const [pickerQ, setPickerQ] = useState("");
-const [pickerLoading, setPickerLoading] = useState(false);
-const [pickerError, setPickerError] = useState(null);
-const [pickerResults, setPickerResults] = useState([]);
+  const [pickerQ, setPickerQ] = useState("");
+  const [pickerLoading, setPickerLoading] = useState(false);
+  const [pickerError, setPickerError] = useState(null);
+  const [pickerResults, setPickerResults] = useState([]);
 
-/** @type {[{productMap: Record<string, any>, variantMap: Record<string, any>}, (v: any) => void]} */
-const [lookup, setLookup] = useState({
-  productMap: {},
-  variantMap: {},
-});
 
-function asText(v) {
-  return typeof v === "string" ? v : v?.target?.value ?? "";
-}
-
-async function searchProducts(q) {
-  setPickerLoading(true);
-  setPickerError(null);
-  try {
-    const res = await apiFetch("/api/products/search", {
-      method: "POST",
-      body: { q },
-    });
-    setPickerResults(Array.isArray(res.products) ? res.products : []);
-  } catch (e) {
-    setPickerError(String(e?.message || e));
-  } finally {
-    setPickerLoading(false);
-  }
-}
-
-async function addVariantToActiveWishlist(productId, variantId) {
-  if (!activeId) return;
-  await apiFetch(`/api/wishlists/${activeId}/items`, {
-    method: "POST",
-    body: { productId, variantId, quantity: 1 },
+  /** @type {[{productMap: Record<string, any>, variantMap: Record<string, any>}, (v: any) => void]} */
+  const [lookup, setLookup] = useState({
+    productMap: {},
+    variantMap: {},
   });
-  await loadWishlistDetail(activeId);
-}
+
+  function asText(v) {
+    return typeof v === "string" ? v : v?.target?.value ?? "";
+  }
+
+  async function searchProducts(q) {
+    setPickerLoading(true);
+    setPickerError(null);
+    try {
+      const res = await apiFetch("/api/products/search", {
+        method: "POST",
+        body: { q },
+      });
+      setPickerResults(Array.isArray(res.products) ? res.products : []);
+    } catch (e) {
+      setPickerError(String(e?.message || e));
+    } finally {
+      setPickerLoading(false);
+    }
+  }
+
+  async function addVariantToActiveWishlist(productId, variantId) {
+    if (!activeId) return;
+    await apiFetch(`/api/wishlists/${activeId}/items`, {
+      method: "POST",
+      body: { productId, variantId, quantity: 1 },
+    });
+    await loadWishlistDetail(activeId);
+  }
 
 
-  
+
 
 
   const baseParams = useMemo(() => {
@@ -185,50 +200,50 @@ async function addVariantToActiveWishlist(productId, variantId) {
   }
 
   async function loadWishlistDetail(id) {
-  try {
-    setLoadingDetail(true);
-    setDetailError(null);
-    setSubmitResult(null);
+    try {
+      setLoadingDetail(true);
+      setDetailError(null);
+      setSubmitResult(null);
 
-    if (!shopDomain) await loadShop();
+      if (!shopDomain) await loadShop();
 
-    // 1️⃣ Load wishlist + items
-    const json = await apiFetch(`/api/wishlists/${id}`);
-    const wl = json.wishlist || json;
+      // 1️⃣ Load wishlist + items
+      const json = await apiFetch(`/api/wishlists/${id}`);
+      const wl = json.wishlist || json;
 
-    setActiveWishlist(wl);
-    setRenameValue(wl?.name || "");
+      setActiveWishlist(wl);
+      setRenameValue(wl?.name || "");
 
-    // 2️⃣ Enrich items (product + variant metadata)
-    const items = Array.isArray(wl?.items) ? wl.items : [];
+      // 2️⃣ Enrich items (product + variant metadata)
+      const items = Array.isArray(wl?.items) ? wl.items : [];
 
-    const productIds = items
-      .map((i) => i.productId)
-      .filter(Boolean);
+      const productIds = items
+        .map((i) => i.productId)
+        .filter(Boolean);
 
-    const variantIds = items
-      .map((i) => i.variantId)
-      .filter(Boolean);
+      const variantIds = items
+        .map((i) => i.variantId)
+        .filter(Boolean);
 
-    if (productIds.length || variantIds.length) {
-      const meta = await apiFetch("/api/lookup", {
-        method: "POST",
-        body: {
-          productIds,
-          variantIds,
-        },
-      });
+      if (productIds.length || variantIds.length) {
+        const meta = await apiFetch("/api/lookup", {
+          method: "POST",
+          body: {
+            productIds,
+            variantIds,
+          },
+        });
 
-      setLookup(meta); // { productMap, variantMap }
-    } else {
-      setLookup({ productMap: {}, variantMap: {} });
+        setLookup(meta); // { productMap, variantMap }
+      } else {
+        setLookup({ productMap: {}, variantMap: {} });
+      }
+    } catch (e) {
+      setDetailError(String(e?.message || e));
+    } finally {
+      setLoadingDetail(false);
     }
-  } catch (e) {
-    setDetailError(String(e?.message || e));
-  } finally {
-    setLoadingDetail(false);
   }
-}
 
 
   async function createWishlist() {
@@ -271,27 +286,27 @@ async function addVariantToActiveWishlist(productId, variantId) {
     }
   }
 
- async function deleteWishlist() {
-  if (!activeId) return;
-  try {
-    setDeleting(true);
-    setDetailError(null);
+  async function deleteWishlist() {
+    if (!activeId) return;
+    try {
+      setDeleting(true);
+      setDetailError(null);
 
-    await apiFetch(`/api/wishlists/${activeId}`, { method: "DELETE" });
+      await apiFetch(`/api/wishlists/${activeId}`, { method: "DELETE" });
 
-    // clear detail view first so UI doesn't try to re-render stale ids
-    setActiveId(null);
-    setActiveWishlist(null);
-    setRenameValue("");
-    setSubmitResult(null);
+      // clear detail view first so UI doesn't try to re-render stale ids
+      setActiveId(null);
+      setActiveWishlist(null);
+      setRenameValue("");
+      setSubmitResult(null);
 
-    await loadWishlists();
-  } catch (e) {
-    setDetailError(String(e?.message || e));
-  } finally {
-    setDeleting(false);
+      await loadWishlists();
+    } catch (e) {
+      setDetailError(String(e?.message || e));
+    } finally {
+      setDeleting(false);
+    }
   }
-}
 
   async function addItem() {
     if (!activeId) return;
@@ -330,63 +345,65 @@ async function addVariantToActiveWishlist(productId, variantId) {
   }
 
   async function updateItemQty(itemId, nextQty) {
-  if (!activeId) return;
+    if (!activeId) return;
 
-  const qty = Math.max(1, parseInt(String(nextQty), 10) || 1);
+    const qty = Math.max(1, parseInt(String(nextQty), 10) || 1);
 
-  try {
-    setDetailError(null);
-
-    // optimistic UI update (optional but feels instant)
-    setActiveWishlist((prev) => {
-      if (!prev?.items) return prev;
-      return {
-        ...prev,
-        items: prev.items.map((it) => (it.id === itemId ? { ...it, quantity: qty } : it)),
-      };
-    });
-
-    await apiFetch(`/api/wishlists/${activeId}/items/${itemId}`, {
-      method: "PATCH",
-      body: { quantity: qty },
-    });
-
-    // re-sync from server (keeps lookup/enrichment consistent)
-    await loadWishlistDetail(activeId);
-  } catch (e) {
-    setDetailError(String(e?.message || e));
-    // if patch failed, revert by reloading
     try {
+      setDetailError(null);
+
+      // optimistic UI update (optional but feels instant)
+      setActiveWishlist((prev) => {
+        if (!prev?.items) return prev;
+        return {
+          ...prev,
+          items: prev.items.map((it) => (it.id === itemId ? { ...it, quantity: qty } : it)),
+        };
+      });
+
+      await apiFetch(`/api/wishlists/${activeId}/items/${itemId}`, {
+        method: "PATCH",
+        body: { quantity: qty },
+      });
+
+      // re-sync from server (keeps lookup/enrichment consistent)
       await loadWishlistDetail(activeId);
-    } catch {}
+    } catch (e) {
+      setDetailError(String(e?.message || e));
+      // if patch failed, revert by reloading
+      try {
+        await loadWishlistDetail(activeId);
+      } catch { }
+    }
   }
-}
 
-async function removeItem(itemId) {
-  if (!activeId) return;
+  async function removeItem(itemId) {
+    if (!activeId) return;
 
-  try {
-    setDetailError(null);
-
-    // optimistic remove
-    setActiveWishlist((prev) => {
-      if (!prev?.items) return prev;
-      return { ...prev, items: prev.items.filter((it) => it.id !== itemId) };
-    });
-
-    await apiFetch(`/api/wishlists/${activeId}/items/${itemId}`, {
-      method: "DELETE",
-    });
-
-    await loadWishlistDetail(activeId);
-  } catch (e) {
-    setDetailError(String(e?.message || e));
-    // revert by reloading
     try {
+      setDetailError(null);
+
+      // optimistic remove
+      setActiveWishlist((prev) => {
+        if (!prev?.items) return prev;
+        return { ...prev, items: prev.items.filter((it) => it.id !== itemId) };
+      });
+
+      await apiFetch(`/api/wishlists/${activeId}/items/${itemId}`, {
+        method: "DELETE",
+      });
+
       await loadWishlistDetail(activeId);
-    } catch {}
+    } catch (e) {
+      setDetailError(String(e?.message || e));
+      // revert by reloading
+      try {
+        await loadWishlistDetail(activeId);
+      } catch { }
+    }
   }
-}
+
+
 
   async function submitForQuote() {
   if (!activeId) return;
@@ -397,24 +414,22 @@ async function removeItem(itemId) {
     setSubmitResult(null);
 
     const res = await apiFetch(`/api/wishlists/${activeId}/submit`, {
-      
-      method: "POST",
-      body: { note: submitNote || "" }, // if you have a note field; otherwise remove
-    });
+  method: "POST",
+  body: { note: submitNote || "", countryCode: countryCode || null },
+});
+
     console.log("submit response", res);
+    setSubmitResult(res);
 
-
-    // res = { submission }
-    setSubmitResult(res?.submission || res);
-
-    // Optional: refresh detail (so you can show submission history later)
     await loadWishlistDetail(activeId);
   } catch (e) {
+    console.error(e);
     setDetailError(String(e?.message || e));
   } finally {
     setSubmitting(false);
   }
 }
+
 
 
   function openWishlist(id) {
@@ -497,7 +512,7 @@ async function removeItem(itemId) {
 
           {wl && items.length === 0 && <s-text>No items yet.</s-text>}
 
-          
+
 
 
 
@@ -508,28 +523,28 @@ async function removeItem(itemId) {
                 <s-list-item key={it.id}>
                   <s-stack direction="block" gap="base">
                     {(() => {
-  const pGid = String(it.productId || "").startsWith("gid://")
-    ? it.productId
-    : `gid://shopify/Product/${it.productId}`;
-  const vGid = String(it.variantId || "").startsWith("gid://")
-    ? it.variantId
-    : `gid://shopify/ProductVariant/${it.variantId}`;
+                      const pGid = String(it.productId || "").startsWith("gid://")
+                        ? it.productId
+                        : `gid://shopify/Product/${it.productId}`;
+                      const vGid = String(it.variantId || "").startsWith("gid://")
+                        ? it.variantId
+                        : `gid://shopify/ProductVariant/${it.variantId}`;
 
-  const v = lookup?.variantMap?.[vGid];
-  const p = lookup?.productMap?.[pGid];
+                      const v = lookup?.variantMap?.[vGid];
+                      const p = lookup?.productMap?.[pGid];
 
-  const title = v?.product?.title || p?.title || `Product ${it.productId}`;
-  const variantTitle = v?.title && v.title !== "Default Title" ? v.title : null;
-  const price = v?.price ? `£${v.price}` : null;
+                      const title = v?.product?.title || p?.title || `Product ${it.productId}`;
+                      const variantTitle = v?.title && v.title !== "Default Title" ? v.title : null;
+                      const price = v?.price ? `£${v.price}` : null;
 
-  return (
-    <s-stack direction="block" gap="base">
-      <s-text>{title}</s-text>
-      {variantTitle && <s-text>{variantTitle}</s-text>}
-      {price && <s-text>{price}</s-text>}
-    </s-stack>
-  );
-})()}
+                      return (
+                        <s-stack direction="block" gap="base">
+                          <s-text>{title}</s-text>
+                          {variantTitle && <s-text>{variantTitle}</s-text>}
+                          {price && <s-text>{price}</s-text>}
+                        </s-stack>
+                      );
+                    })()}
 
                     <s-text>Qty: {it.quantity}</s-text>
 
@@ -563,76 +578,76 @@ async function removeItem(itemId) {
           <s-heading>Add item</s-heading>
           <s-stack direction="block" gap="base">
             <s-button
-  variant="secondary"
-  onClick={() => {
-    console.log("OPEN PICKER");
-    setPickerOpen((v) => !v);
-    setPickerQ("");
-    setPickerResults([]);
-    setPickerError(null);
-  }}
->
-  Add item
-</s-button>
+              variant="secondary"
+              onClick={() => {
+                console.log("OPEN PICKER");
+                setPickerOpen((v) => !v);
+                setPickerQ("");
+                setPickerResults([]);
+                setPickerError(null);
+              }}
+            >
+              Add item
+            </s-button>
 
-{pickerOpen && (
-  <s-section heading="Add item to wishlist">
-    <s-stack direction="block" gap="base">
-      <s-text-field
-        label="Search products"
-        value={pickerQ}
-        onChange={(v) => {
-          const next = asText(v);
-          setPickerQ(next);
-          if (next.trim().length >= 2) searchProducts(next.trim());
-          else setPickerResults([]);
-        }}
-      />
+            {pickerOpen && (
+              <s-section heading="Add item to wishlist">
+                <s-stack direction="block" gap="base">
+                  <s-text-field
+                    label="Search products"
+                    value={pickerQ}
+                    onChange={(v) => {
+                      const next = asText(v);
+                      setPickerQ(next);
+                      if (next.trim().length >= 2) searchProducts(next.trim());
+                      else setPickerResults([]);
+                    }}
+                  />
 
-      <s-button variant="secondary" onClick={() => setPickerOpen(false)}>
-        Close
-      </s-button>
+                  <s-button variant="secondary" onClick={() => setPickerOpen(false)}>
+                    Close
+                  </s-button>
 
-      {pickerLoading && <s-text>Searching…</s-text>}
-      {pickerError && <s-banner tone="critical">{pickerError}</s-banner>}
+                  {pickerLoading && <s-text>Searching…</s-text>}
+                  {pickerError && <s-banner tone="critical">{pickerError}</s-banner>}
 
-      {!pickerLoading && !pickerError && pickerResults.length === 0 && pickerQ.trim().length >= 2 && (
-        <s-text>No results</s-text>
-      )}
+                  {!pickerLoading && !pickerError && pickerResults.length === 0 && pickerQ.trim().length >= 2 && (
+                    <s-text>No results</s-text>
+                  )}
 
-      {pickerResults.map((p) => (
-        <s-section key={p.id}>
-          <s-stack direction="block" gap="base">
-            <s-text>{p.title}</s-text>
+                  {pickerResults.map((p) => (
+                    <s-section key={p.id}>
+                      <s-stack direction="block" gap="base">
+                        <s-text>{p.title}</s-text>
 
-            {(p.variants?.nodes || []).map((v) => (
-              <s-stack key={v.id} direction="inline" gap="base" >
-                <s-text>
-                  {v.title && v.title !== "Default Title" ? v.title : "Default"}
-                  {v.price ? ` • £${v.price}` : ""}
-                </s-text>
+                        {(p.variants?.nodes || []).map((v) => (
+                          <s-stack key={v.id} direction="inline" gap="base" >
+                            <s-text>
+                              {v.title && v.title !== "Default Title" ? v.title : "Default"}
+                              {v.price ? ` • £${v.price}` : ""}
+                            </s-text>
 
-                <s-button
-                  variant="primary"
-                  onClick={async () => {
-                    try {
-                      setPickerError(null);
-                      await addVariantToActiveWishlist(p.id, v.id);
-                    } catch (e) {
-                      setPickerError(String(e?.message || e));
-                    }
-                  }}
-                >
-                  Add
-                </s-button>
-              </s-stack>
-            ))}
-          </s-stack>
-        </s-section>
-      ))}
-    </s-stack>
-  </s-section>
-)}
+                            <s-button
+                              variant="primary"
+                              onClick={async () => {
+                                try {
+                                  setPickerError(null);
+                                  await addVariantToActiveWishlist(p.id, v.id);
+                                } catch (e) {
+                                  setPickerError(String(e?.message || e));
+                                }
+                              }}
+                            >
+                              Add
+                            </s-button>
+                          </s-stack>
+                        ))}
+                      </s-stack>
+                    </s-section>
+                  ))}
+                </s-stack>
+              </s-section>
+            )}
           </s-stack>
         </s-section>
 
@@ -652,12 +667,12 @@ async function removeItem(itemId) {
             {submitResult && <s-text>Submitted: {JSON.stringify(submitResult).slice(0, 180)}</s-text>}
 
             {submitResult && (
-  <s-banner tone="success">
-    <s-text>
-      Submitted: {submitResult.id} • Status: {submitResult.status}
-    </s-text>
-  </s-banner>
-)}
+              <s-banner tone="success">
+                <s-text>
+                  Submitted: {submitResult.id} • Status: {submitResult.status}
+                </s-text>
+              </s-banner>
+            )}
 
           </s-stack>
         </s-section>

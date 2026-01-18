@@ -1,60 +1,11 @@
 import prisma from "../../db.server";
 import { readBody, asString } from "../../utils/api.server";
-import { resolveCustomerIdentity } from "../../utils/identity.server";
+import { authenticate } from "../../shopify.server";
 
-const EXT_ORIGIN = "https://extensions.shopifycdn.com";
-const API_VERSION = "2025-10";
+const ADMIN_API_VERSION = "2025-10";
 
-function allowOrigin(request: Request) {
-  const origin = request.headers.get("Origin") || "";
-  return origin === EXT_ORIGIN ? origin : "*";
-}
-
-function corsHeaders(request: Request) {
-  return {
-    "Access-Control-Allow-Origin": allowOrigin(request),
-    Vary: "Origin",
-    "Access-Control-Allow-Methods": "GET,POST,PATCH,DELETE,OPTIONS",
-    "Access-Control-Allow-Headers": "Content-Type, Authorization",
-  } as Record<string, string>;
-}
-
-function corsJson(request: Request, data: unknown, status = 200) {
-  return new Response(JSON.stringify(data), {
-    status,
-    headers: { "Content-Type": "application/json", ...corsHeaders(request) },
-  });
-}
-
-function corsNoContent(request: Request) {
-  return new Response(null, { status: 204, headers: corsHeaders(request) });
-}
-
-async function getAnyToken(shop: string) {
-  const sess = await prisma.session.findFirst({
-    where: { shop },
-    select: { accessToken: true },
-  });
-  return sess?.accessToken || null;
-}
-
-async function adminGraphql(shop: string, accessToken: string, query: string, variables: any) {
-  const res = await fetch(`https://${shop}/admin/api/${API_VERSION}/graphql.json`, {
-    method: "POST",
-    headers: {
-      "X-Shopify-Access-Token": accessToken,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ query, variables }),
-  });
-
-  const json = await res.json();
-  return { ok: res.ok, status: res.status, json };
-}
-
-export async function loader({ request }: { request: Request }) {
-  if (request.method === "OPTIONS") return corsNoContent(request);
-  return corsJson(request, { error: "Method not allowed" }, 405);
+function json(data: unknown, status = 200) {
+  return Response.json(data, { status });
 }
 
 export async function action({
@@ -64,114 +15,114 @@ export async function action({
   request: Request;
   params: { id?: string };
 }) {
-  if (request.method === "OPTIONS") return corsNoContent(request);
+  const { session, admin } = await authenticate.admin(request);
 
-  try {
-    const identity = await resolveCustomerIdentity(request);
-    const wishlistId = params.id;
+  const wishlistId = params.id;
+  if (!wishlistId) return json({ error: "Missing id" }, 400);
+  if (request.method !== "POST") return json({ error: "Method not allowed" }, 405);
 
-    if (!wishlistId) return corsJson(request, { error: "Missing id" }, 400);
-    if (request.method !== "POST") return corsJson(request, { error: "Method not allowed" }, 405);
+  const shop = await prisma.shop.upsert({
+    where: { shop: session.shop },
+    update: {},
+    create: { shop: session.shop },
+  });
 
-    const wishlist = await prisma.wishlist.findFirst({
-      where: {
-        id: wishlistId,
-        shopId: identity.shop.id,
-        customerId: identity.customer.id,
-        isArchived: false,
-      },
-      include: { items: true },
-    });
+  const wishlist = await prisma.wishlist.findFirst({
+    where: { id: wishlistId, shopId: shop.id, isArchived: false },
+    include: { items: true, customer: true },
+  });
 
-    if (!wishlist) return corsJson(request, { error: "Wishlist not found" }, 404);
-    if (!wishlist.items.length) return corsJson(request, { error: "Wishlist is empty" }, 400);
+  if (!wishlist) return json({ error: "Wishlist not found" }, 404);
+  if (!wishlist.items.length) return json({ error: "Wishlist is empty" }, 400);
 
-    const body = await readBody(request);
-    const note = (asString(body.note) || "").trim();
+  const body = await readBody(request);
+  const note = (asString(body.note) || "").trim();
+  const countryCode = (asString((body as any).countryCode) || "").trim().toUpperCase() || null;
 
-    const token = await getAnyToken(identity.shop.shop);
-    if (!token) return corsJson(request, { error: "Missing access token for shop" }, 500);
+  const presentmentCurrencyCode = countryCode
+    ? (
+        await prisma.marketCurrencyRule.findUnique({
+          where: { shopId_countryCode: { shopId: shop.id, countryCode } },
+          select: { currency: true },
+        })
+      )?.currency?.trim()?.toUpperCase() ?? null
+    : null;
 
-    const lineItems = wishlist.items.map((i) => ({
-      variantId: i.variantId, // must be gid://shopify/ProductVariant/...
-      quantity: i.quantity,
-    }));
+  const lineItems = wishlist.items.map((i) => ({
+    variantId: i.variantId,
+    quantity: i.quantity,
+  }));
 
-    const gql = `#graphql
-      mutation CreateDraftOrder($input: DraftOrderInput!) {
-        draftOrderCreate(input: $input) {
-          draftOrder { id name }
-          userErrors { field message }
-        }
+  const draftNote = [
+    `Wishlist: ${wishlist.id} (${wishlist.name})`,
+    countryCode ? `Country: ${countryCode}` : null,
+    presentmentCurrencyCode ? `Currency: ${presentmentCurrencyCode}` : null,
+    note ? `Staff note: ${note}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  const customerGid = `gid://shopify/Customer/${wishlist.customer.customerId}`;
+
+  const gql = `#graphql
+    mutation CreateDraftOrder($input: DraftOrderInput!) {
+      draftOrderCreate(input: $input) {
+        draftOrder { id name }
+        userErrors { field message }
       }
-    `;
+    }
+  `;
 
-    const draftNote = [
-      `Wishlist: ${wishlist.id} (${wishlist.name})`,
-      note ? `Customer note: ${note}` : null,
-    ]
-      .filter(Boolean)
-      .join("\n");
-
-    const { json } = await adminGraphql(identity.shop.shop, token, gql, {
+  const resp = await admin.graphql(gql, {
+    variables: {
       input: {
+        customerId: customerGid,
         note: draftNote,
-        tags: [`wishlist:${wishlist.id}`, `wishlistName:${wishlist.name}`],
+        tags: [
+          `wishlist:${wishlist.id}`,
+          `wishlistName:${wishlist.name}`,
+          `wishlist-admin-submit`,
+          countryCode ? `country:${countryCode}` : null,
+          presentmentCurrencyCode ? `currency:${presentmentCurrencyCode}` : null,
+        ].filter(Boolean),
         lineItems,
+        ...(presentmentCurrencyCode ? { presentmentCurrencyCode } : {}),
       },
-    });
+    },
+  });
 
-    if (json?.errors?.length) {
-      const submission = await prisma.wishlistSubmission.create({
-        data: {
-          shopId: identity.shop.id,
-          wishlistId: wishlist.id,
-          customerId: identity.customer.id,
-          status: "failed",
-          note: note || null,
-        },
-        select: { id: true, status: true, draftOrderId: true, createdAt: true },
-      });
+  const respJson: any = await resp.json();
 
-      return corsJson(request, { error: "GraphQL error", errors: json.errors, submission }, 400);
-    }
-
-    const userErrors = json?.data?.draftOrderCreate?.userErrors ?? [];
-    if (userErrors.length) {
-      const submission = await prisma.wishlistSubmission.create({
-        data: {
-          shopId: identity.shop.id,
-          wishlistId: wishlist.id,
-          customerId: identity.customer.id,
-          status: "failed",
-          note: note || null,
-        },
-        select: { id: true, status: true, draftOrderId: true, createdAt: true },
-      });
-
-      return corsJson(
-        request,
-        { error: "Draft order create failed", userErrors, submission },
-        400
-      );
-    }
-
-    const draftOrderId = json?.data?.draftOrderCreate?.draftOrder?.id ?? null;
-
-    const submission = await prisma.wishlistSubmission.create({
-      data: {
-        shopId: identity.shop.id,
-        wishlistId: wishlist.id,
-        customerId: identity.customer.id,
-        status: "created",
-        draftOrderId,
-        note: note || null,
-      },
-      select: { id: true, status: true, draftOrderId: true, createdAt: true },
-    });
-
-    return corsJson(request, { submission }, 201);
-  } catch (e: any) {
-    return corsJson(request, { error: e?.message || "Unauthorized" }, 401);
+  if (respJson?.errors?.length) {
+    return json({ error: "GraphQL error", errors: respJson.errors }, 400);
   }
+
+  const userErrors = respJson?.data?.draftOrderCreate?.userErrors ?? [];
+  if (userErrors.length) {
+    return json({ error: "Draft order create failed", userErrors }, 400);
+  }
+
+  const draftOrderId = respJson?.data?.draftOrderCreate?.draftOrder?.id ?? null;
+
+  const submission = await prisma.wishlistSubmission.create({
+    data: {
+      shopId: shop.id,
+      wishlistId: wishlist.id,
+      customerId: wishlist.customerId,
+      status: "created",
+      draftOrderId,
+      note: note || null,
+    },
+    select: { id: true, status: true, draftOrderId: true, createdAt: true },
+  });
+
+  return json(
+    {
+      submission,
+      countryCode,
+      presentmentCurrencyCode,
+      _submitVersion: "admin-draftOrderCreate-v2-currency-rules",
+    },
+    201
+  );
 }
