@@ -83,11 +83,47 @@ function Extension() {
   const [submitting, setSubmitting] = useState(false);
   const [submitResult, setSubmitResult] = useState(null);
 
+  const [pickerOpen, setPickerOpen] = useState(false);
+const [pickerQ, setPickerQ] = useState("");
+const [pickerLoading, setPickerLoading] = useState(false);
+const [pickerError, setPickerError] = useState(null);
+const [pickerResults, setPickerResults] = useState([]);
+
 /** @type {[{productMap: Record<string, any>, variantMap: Record<string, any>}, (v: any) => void]} */
 const [lookup, setLookup] = useState({
   productMap: {},
   variantMap: {},
 });
+
+function asText(v) {
+  return typeof v === "string" ? v : v?.target?.value ?? "";
+}
+
+async function searchProducts(q) {
+  setPickerLoading(true);
+  setPickerError(null);
+  try {
+    const res = await apiFetch("/api/products/search", {
+      method: "POST",
+      body: { q },
+    });
+    setPickerResults(Array.isArray(res.products) ? res.products : []);
+  } catch (e) {
+    setPickerError(String(e?.message || e));
+  } finally {
+    setPickerLoading(false);
+  }
+}
+
+async function addVariantToActiveWishlist(productId, variantId) {
+  if (!activeId) return;
+  await apiFetch(`/api/wishlists/${activeId}/items`, {
+    method: "POST",
+    body: { productId, variantId, quantity: 1 },
+  });
+  await loadWishlistDetail(activeId);
+}
+
 
   
 
@@ -454,6 +490,106 @@ async function removeItem(itemId) {
           <s-heading>Items</s-heading>
 
           {wl && items.length === 0 && <s-text>No items yet.</s-text>}
+
+          <s-button
+  variant="secondary"
+  onClick={() => {
+    setPickerOpen(true);
+    setPickerQ("");
+    setPickerResults([]);
+    setPickerError(null);
+  }}
+>
+  Add item
+</s-button>
+
+{pickerOpen && (
+  <div
+    style={{
+      position: "fixed",
+      inset: 0,
+      background: "rgba(0,0,0,0.35)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      zIndex: 9999,
+      padding: "16px",
+    }}
+  >
+    <div
+      style={{
+        width: "100%",
+        maxWidth: "720px",
+        background: "white",
+        borderRadius: "12px",
+        padding: "16px",
+      }}
+    >
+      <s-stack direction="block" gap="base">
+        <s-stack direction="inline" gap="base">
+          <s-heading>Add item to wishlist</s-heading>
+          <s-button variant="secondary" onClick={() => setPickerOpen(false)}>
+            Close
+          </s-button>
+        </s-stack>
+
+        <s-text-field
+          label="Search products"
+          value={pickerQ}
+          onChange={(v) => {
+            const next = asText(v);
+            setPickerQ(next);
+            if (next.trim().length >= 2) searchProducts(next.trim());
+            else setPickerResults([]);
+          }}
+        />
+
+        {pickerLoading && <s-text>Searching…</s-text>}
+        {pickerError && <s-banner tone="critical">{pickerError}</s-banner>}
+
+        {!pickerLoading && !pickerError && pickerResults.length === 0 && pickerQ.trim().length >= 2 && (
+          <s-text>No results</s-text>
+        )}
+
+        <s-stack direction="block" gap="base">
+          {pickerResults.map((p) => (
+            <s-section key={p.id}>
+              <s-stack direction="block" gap="base">
+                <s-text>{p.title}</s-text>
+
+                {(p.variants?.nodes || []).map((v) => (
+                  <s-stack key={v.id} direction="inline" gap="base">
+                    <s-text>
+                      {v.title && v.title !== "Default Title" ? v.title : "Default"}
+                      {v.price ? ` • £${v.price}` : ""}
+                    </s-text>
+
+                    <s-button
+                      variant="primary"
+                      onClick={async () => {
+                        try {
+                          setDetailError(null);
+                          await addVariantToActiveWishlist(p.id, v.id);
+                          setPickerOpen(false);
+                        } catch (e) {
+                          setPickerError(String(e?.message || e));
+                        }
+                      }}
+                    >
+                      Add
+                    </s-button>
+                  </s-stack>
+                ))}
+              </s-stack>
+            </s-section>
+          ))}
+        </s-stack>
+      </s-stack>
+    </div>
+  </div>
+)}
+
+
 
           {wl && items.length > 0 && (
             <s-unordered-list>
