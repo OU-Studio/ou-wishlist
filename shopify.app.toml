@@ -27,5 +27,5 @@ use_legacy_install_flow = false
 
 [auth]
 redirect_urls = [
-  "https://ou-wishlist-production.up.railway.app/api/auth/callback"
+  "https://ou-wishlist-production.up.railway.app/auth/callback"
 ]
