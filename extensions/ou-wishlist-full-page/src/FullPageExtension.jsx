@@ -491,103 +491,8 @@ async function removeItem(itemId) {
 
           {wl && items.length === 0 && <s-text>No items yet.</s-text>}
 
-          <s-button
-  variant="secondary"
-  onClick={() => {
-    setPickerOpen(true);
-    setPickerQ("");
-    setPickerResults([]);
-    setPickerError(null);
-  }}
->
-  Add item
-</s-button>
+          
 
-{pickerOpen && (
-  <div
-    style={{
-      position: "fixed",
-      inset: 0,
-      background: "rgba(0,0,0,0.35)",
-      display: "flex",
-      alignItems: "center",
-      justifyContent: "center",
-      zIndex: 9999,
-      padding: "16px",
-    }}
-  >
-    <div
-      style={{
-        width: "100%",
-        maxWidth: "720px",
-        background: "white",
-        borderRadius: "12px",
-        padding: "16px",
-      }}
-    >
-      <s-stack direction="block" gap="base">
-        <s-stack direction="inline" gap="base">
-          <s-heading>Add item to wishlist</s-heading>
-          <s-button variant="secondary" onClick={() => setPickerOpen(false)}>
-            Close
-          </s-button>
-        </s-stack>
-
-        <s-text-field
-          label="Search products"
-          value={pickerQ}
-          onChange={(v) => {
-            const next = asText(v);
-            setPickerQ(next);
-            if (next.trim().length >= 2) searchProducts(next.trim());
-            else setPickerResults([]);
-          }}
-        />
-
-        {pickerLoading && <s-text>Searching…</s-text>}
-        {pickerError && <s-banner tone="critical">{pickerError}</s-banner>}
-
-        {!pickerLoading && !pickerError && pickerResults.length === 0 && pickerQ.trim().length >= 2 && (
-          <s-text>No results</s-text>
-        )}
-
-        <s-stack direction="block" gap="base">
-          {pickerResults.map((p) => (
-            <s-section key={p.id}>
-              <s-stack direction="block" gap="base">
-                <s-text>{p.title}</s-text>
-
-                {(p.variants?.nodes || []).map((v) => (
-                  <s-stack key={v.id} direction="inline" gap="base">
-                    <s-text>
-                      {v.title && v.title !== "Default Title" ? v.title : "Default"}
-                      {v.price ? ` • £${v.price}` : ""}
-                    </s-text>
-
-                    <s-button
-                      variant="primary"
-                      onClick={async () => {
-                        try {
-                          setDetailError(null);
-                          await addVariantToActiveWishlist(p.id, v.id);
-                          setPickerOpen(false);
-                        } catch (e) {
-                          setPickerError(String(e?.message || e));
-                        }
-                      }}
-                    >
-                      Add
-                    </s-button>
-                  </s-stack>
-                ))}
-              </s-stack>
-            </s-section>
-          ))}
-        </s-stack>
-      </s-stack>
-    </div>
-  </div>
-)}
 
 
 
@@ -649,29 +554,79 @@ async function removeItem(itemId) {
         </s-section>
 
         <s-section>
-          <s-heading>Add item (testing)</s-heading>
+          <s-heading>Add item</s-heading>
           <s-stack direction="block" gap="base">
-            <s-text-field
-              label="Product ID (gid://shopify/Product/...)"
-              value={addProductId}
-              onChange={(v) => setAddProductId(asText(v))}
-              disabled={addingItem}
-            />
-            <s-text-field
-              label="Variant ID (gid://shopify/ProductVariant/...)"
-              value={addVariantId}
-              onChange={(v) => setAddVariantId(asText(v))}
-              disabled={addingItem}
-            />
-            <s-text-field
-              label="Quantity"
-              value={addQty}
-              onChange={(v) => setAddQty(asText(v))}
-              disabled={addingItem}
-            />
-            <s-button onClick={addItem} disabled={addingItem} variant="primary">
-              {addingItem ? "Adding…" : "Add to wishlist"}
-            </s-button>
+            <s-button
+  variant="secondary"
+  onClick={() => {
+    console.log("OPEN PICKER");
+    setPickerOpen((v) => !v);
+    setPickerQ("");
+    setPickerResults([]);
+    setPickerError(null);
+  }}
+>
+  Add item
+</s-button>
+
+{pickerOpen && (
+  <s-section heading="Add item to wishlist">
+    <s-stack direction="block" gap="base">
+      <s-text-field
+        label="Search products"
+        value={pickerQ}
+        onChange={(v) => {
+          const next = asText(v);
+          setPickerQ(next);
+          if (next.trim().length >= 2) searchProducts(next.trim());
+          else setPickerResults([]);
+        }}
+      />
+
+      <s-button variant="secondary" onClick={() => setPickerOpen(false)}>
+        Close
+      </s-button>
+
+      {pickerLoading && <s-text>Searching…</s-text>}
+      {pickerError && <s-banner tone="critical">{pickerError}</s-banner>}
+
+      {!pickerLoading && !pickerError && pickerResults.length === 0 && pickerQ.trim().length >= 2 && (
+        <s-text>No results</s-text>
+      )}
+
+      {pickerResults.map((p) => (
+        <s-section key={p.id}>
+          <s-stack direction="block" gap="base">
+            <s-text>{p.title}</s-text>
+
+            {(p.variants?.nodes || []).map((v) => (
+              <s-stack key={v.id} direction="inline" gap="base" >
+                <s-text>
+                  {v.title && v.title !== "Default Title" ? v.title : "Default"}
+                  {v.price ? ` • £${v.price}` : ""}
+                </s-text>
+
+                <s-button
+                  variant="primary"
+                  onClick={async () => {
+                    try {
+                      setPickerError(null);
+                      await addVariantToActiveWishlist(p.id, v.id);
+                    } catch (e) {
+                      setPickerError(String(e?.message || e));
+                    }
+                  }}
+                >
+                  Add
+                </s-button>
+              </s-stack>
+            ))}
+          </s-stack>
+        </s-section>
+      ))}
+    </s-stack>
+  </s-section>
+)}
           </s-stack>
         </s-section>
 
