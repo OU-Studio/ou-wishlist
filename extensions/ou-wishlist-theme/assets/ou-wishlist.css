@@ -1,0 +1,9 @@
+.ou-wishlist__modal[hidden]{display:none}
+.ou-wishlist__modal{position:fixed;inset:0;z-index:9999}
+.ou-wishlist__backdrop{position:absolute;inset:0;background:rgba(0,0,0,.35)}
+.ou-wishlist__panel{position:relative;max-width:520px;margin:10vh auto;background:#fff;border-radius:12px;padding:16px}
+.ou-wishlist__header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
+.ou-wishlist__row{display:flex;gap:8px;align-items:center;margin:10px 0}
+.ou-wishlist__row label{min-width:120px}
+.ou-wishlist__status{margin-top:10px;font-size:14px}
+.ou-wishlist__login a{text-decoration:underline}
