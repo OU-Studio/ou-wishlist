@@ -79,6 +79,27 @@ export async function action({ request }: { request: Request }) {
       );
     }
 
+     const existing = await prisma.wishlist.findFirst({
+    where: {
+      shopId: identity.shop.id,
+      customerId: identity.customer.id,
+      name,
+      isArchived: false,
+    },
+    select: { id: true, name: true, createdAt: true, updatedAt: true },
+  });
+
+
+
+  if (existing) {
+    return identity.cors(
+      Response.json(
+        { error: "A wishlist with that name already exists", wishlist: existing },
+        { status: 409 }
+      )
+    );
+  }
+
     const wishlist = await prisma.wishlist.create({
       data: {
         shopId: identity.shop.id,
