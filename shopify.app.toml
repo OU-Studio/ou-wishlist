@@ -21,7 +21,7 @@ api_version = "2026-04"
 
 [access_scopes]
 # Learn more at https://shopify.dev/docs/apps/tools/cli/configuration#access_scopes
-scopes = "read_products,read_customers,write_draft_orders,read_draft_orders"
+scopes = "read_customers,write_draft_orders,read_draft_orders,read_products"
 optional_scopes = [ ]
 use_legacy_install_flow = false
 
@@ -29,3 +29,8 @@ use_legacy_install_flow = false
 redirect_urls = [
   "https://ou-wishlist-production.up.railway.app/auth/callback"
 ]
+
+[app_proxy]
+url = "https://ou-wishlist-production.up.railway.app"
+subpath = "ou-wishlist"
+prefix = "apps"
