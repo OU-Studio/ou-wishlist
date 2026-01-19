@@ -98,30 +98,35 @@ export async function action({ request }: ActionFunctionArgs) {
     }
 
     const gql = `#graphql
-      query Lookup($productIds: [ID!]!, $variantIds: [ID!]!, $country: CountryCode) {
-        products: nodes(ids: $productIds) {
-          ... on Product {
-            id
-            title
-            handle
-          }
-        }
+  query Lookup($productIds: [ID!]!, $variantIds: [ID!]!, $country: CountryCode) {
+    shop { currencyCode }
 
-        variants: nodes(ids: $variantIds) {
-          ... on ProductVariant {
-            id
-            title
-            sku
-            product { id title handle }
-            price { amount currencyCode } # base fallback
-            contextualPricing(context: { country: $country }) {
-              price { amount currencyCode }
-              compareAtPrice { amount currencyCode }
-            }
-          }
+    products: nodes(ids: $productIds) {
+      ... on Product {
+        id
+        title
+        handle
+      }
+    }
+
+    variants: nodes(ids: $variantIds) {
+      ... on ProductVariant {
+        id
+        title
+        sku
+        product { id title handle }
+
+        price  # Money scalar (no subfields)
+
+        contextualPricing(context: { country: $country }) {
+          price { amount currencyCode }
+          compareAtPrice { amount currencyCode }
         }
       }
-    `;
+    }
+  }
+`;
+
 
     const resp = await fetch(
       `https://${identity.shop.shop}/admin/api/${ADMIN_API_VERSION}/graphql.json`,
@@ -168,21 +173,27 @@ export async function action({ request }: ActionFunctionArgs) {
       if (p?.id) productMap[p.id] = p;
     }
 
-    for (const v of variants) {
-      if (!v?.id) continue;
+    const shopCurrency = json?.data?.shop?.currencyCode ?? null;
 
-      const contextualPrice = v?.contextualPricing?.price || null;
-      const basePrice = v?.price || null;
+for (const v of variants) {
+  if (!v?.id) continue;
 
-      // ensure the extension always gets: variant.price = {amount,currencyCode}
-      const finalPrice = contextualPrice || basePrice || null;
+  const contextualPrice = v?.contextualPricing?.price || null;
 
-      variantMap[v.id] = {
-        ...v,
-        price: finalPrice, // override to contextual/base price object
-        compareAtPrice: v?.contextualPricing?.compareAtPrice || null,
-      };
-    }
+  // v.price is a scalar (string/number-like)
+  const baseAmount = v?.price != null ? String(v.price) : null;
+  const basePrice =
+    baseAmount && shopCurrency ? { amount: baseAmount, currencyCode: shopCurrency } : null;
+
+  const finalPrice = contextualPrice || basePrice || null;
+
+  variantMap[v.id] = {
+    ...v,
+    price: finalPrice, // always { amount, currencyCode } when possible
+    compareAtPrice: v?.contextualPricing?.compareAtPrice || null,
+  };
+}
+
 
     return corsJson(request, { productMap, variantMap, countryCode }, 200);
   } catch (e: any) {

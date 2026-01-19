@@ -79,7 +79,7 @@
 }
 @media (min-width: 520px) {
   .ou-wishlist__row {
-    grid-template-columns: 150px 1fr auto;
+    grid-template-columns: 150px 1fr 1fr;
     align-items: center;
   }
   .ou-wishlist__row label { margin-top: 2px; }
@@ -92,6 +92,10 @@
 }
 
 /* Inputs/selects — attempt to use theme field styling if available */
+.ou-wishlist__select{
+        grid-column-end: 4;
+    grid-column-start: 2;
+}
 .ou-wishlist__select,
 .ou-wishlist__new {
   width: 100%;
