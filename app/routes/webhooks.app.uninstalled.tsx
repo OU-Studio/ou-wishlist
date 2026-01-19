@@ -1,17 +1,36 @@
 import type { ActionFunctionArgs } from "react-router";
 import { authenticate } from "../shopify.server";
-import db from "../db.server";
+import { prisma } from "../db.server";
 
 export const action = async ({ request }: ActionFunctionArgs) => {
-  const { shop, session, topic } = await authenticate.webhook(request);
+  const { shop, topic } = await authenticate.webhook(request);
 
   console.log(`Received ${topic} webhook for ${shop}`);
 
-  // Webhook requests can trigger multiple times and after an app has already been uninstalled.
-  // If this webhook already ran, the session may have been deleted previously.
-  if (session) {
-    await db.session.deleteMany({ where: { shop } });
+  // Find shop row
+  const shopRow = await prisma.shop.findUnique({
+    where: { shop },
+    select: { id: true },
+  });
+
+  if (shopRow) {
+    const shopId = shopRow.id;
+
+    // Delete everything owned by the shop
+    await prisma.$transaction([
+      prisma.wishlistSubmission.deleteMany({ where: { shopId } }),
+      prisma.wishlistItem.deleteMany({
+        where: { wishlist: { shopId } },
+      }),
+      prisma.wishlist.deleteMany({ where: { shopId } }),
+      prisma.marketCurrencyRule.deleteMany({ where: { shopId } }),
+      prisma.session.deleteMany({ where: { shop } }),
+      prisma.shop.delete({ where: { id: shopId } }),
+    ]);
+  } else {
+    // Fallback: at least kill sessions
+    await prisma.session.deleteMany({ where: { shop } });
   }
 
-  return new Response();
+  return new Response(null, { status: 200 });
 };
