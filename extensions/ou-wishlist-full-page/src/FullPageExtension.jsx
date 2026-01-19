@@ -286,6 +286,40 @@ const [lookup, setLookup] = useState({
     }
   }
 
+  const CURRENCY_SYMBOL = {
+  GBP: "£",
+  EUR: "€",
+  USD: "$",
+  CAD: "$",
+  AUD: "$",
+  NZD: "$",
+  JPY: "¥",
+  CNY: "¥",
+  HKD: "$",
+  SGD: "$",
+  CHF: "CHF ",
+  SEK: "kr ",
+  NOK: "kr ",
+  DKK: "kr ",
+};
+
+function formatMoney(price) {
+  if (!price) return null;
+
+  // supports { amount, currencyCode } OR legacy "12.00"/12.00 + separate currency
+  const amount = typeof price === "object" ? price.amount : String(price);
+  const code = typeof price === "object" ? price.currencyCode : null;
+
+  if (!amount) return null;
+
+  const n = Number(amount);
+  const amountStr = Number.isFinite(n) ? n.toFixed(2) : String(amount);
+
+  const symbol = code ? (CURRENCY_SYMBOL[code] ?? `${code} `) : "";
+  return `${symbol}${amountStr}`;
+}
+
+
   async function removeItem(itemId) {
     if (!activeId) return;
 
@@ -468,6 +502,7 @@ const [lookup, setLookup] = useState({
     ? `£${v.price}`
     : null;
 
+    const priceText = formatMoney(v?.price);
 
                   return (
                     <s-list-item key={it.id}>
@@ -479,7 +514,7 @@ const [lookup, setLookup] = useState({
 
                         <s-text>Qty: {it.quantity}</s-text>
 
-                        <s-text>Price: {price}</s-text>
+                        <s-text>Price: {priceText}</s-text>
 
                         <s-stack direction="inline" gap="base">
                           <s-button
@@ -506,99 +541,6 @@ const [lookup, setLookup] = useState({
                 })}
               </s-unordered-list>
             )}
-          </s-section>
-        ),
-      },
-      {
-        id: "detail-add-item",
-        show: true,
-        node: (
-          <s-section>
-            <s-heading>Add item</s-heading>
-
-            <s-stack direction="block" gap="base">
-              <s-button
-                variant="secondary"
-                onClick={() => {
-                  setPickerOpen((v) => !v);
-                  setPickerQ("");
-                  setPickerResults([]);
-                  setPickerError(null);
-                }}
-              >
-                Add item
-              </s-button>
-
-              {pickerOpen && (
-                <s-box padding="base" borderWidth="base" borderRadius="base">
-                  <s-stack direction="block" gap="base">
-                    <s-stack direction="inline" gap="base">
-                      <s-heading>Add item to wishlist</s-heading>
-                      <s-button variant="secondary" onClick={() => setPickerOpen(false)}>
-                        Close
-                      </s-button>
-                    </s-stack>
-
-                    <s-text-field
-                      label="Search products"
-                      value={pickerQ}
-                      onChange={(v) => {
-                        const next = asText(v);
-                        setPickerQ(next);
-                        if (next.trim().length >= 2) searchProducts(next.trim());
-                        else setPickerResults([]);
-                      }}
-                    />
-
-                    {pickerLoading && <s-text>Searching…</s-text>}
-                    {pickerError && <s-banner tone="critical">{pickerError}</s-banner>}
-
-                    {!pickerLoading && !pickerError && pickerResults.length === 0 && pickerQ.trim().length >= 2 && (
-                      <s-text>No results</s-text>
-                    )}
-
-                    <s-stack direction="block" gap="base">
-                      {pickerResults.map((p) => (
-                        <s-box key={p.id} padding="base" borderWidth="base" borderRadius="base">
-                          <s-stack direction="block" gap="base">
-                            <s-text>{p.title}</s-text>
-
-                            {(p.variants?.nodes || []).map((v) => (
-                              <s-stack key={v.id} direction="inline" gap="base">
-                                <s-text>
-  {v.title && v.title !== "Default Title" ? v.title : "Default"}
-  {v.price?.amount
-    ? ` • ${v.price.currencyCode} ${v.price.amount}`
-    : v.price
-    ? ` • £${v.price}`
-    : ""}
-</s-text>
-
-
-                                <s-button
-                                  variant="primary"
-                                  onClick={async () => {
-                                    try {
-                                      setPickerError(null);
-                                      await addVariantToActiveWishlist(p.id, v.id);
-                                      setPickerOpen(false);
-                                    } catch (e) {
-                                      setPickerError(String(e?.message || e));
-                                    }
-                                  }}
-                                >
-                                  Add
-                                </s-button>
-                              </s-stack>
-                            ))}
-                          </s-stack>
-                        </s-box>
-                      ))}
-                    </s-stack>
-                  </s-stack>
-                </s-box>
-              )}
-            </s-stack>
           </s-section>
         ),
       },
