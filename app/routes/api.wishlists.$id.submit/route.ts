@@ -66,6 +66,7 @@ async function resolveRuleCurrency(shopId: string, countryCode: string | null) {
 }
 
 async function resolveShopDefaultCurrency(shopId: string) {
+  // Requires Shop.defaultCurrency String? in schema + migration applied.
   const shop = await prisma.shop.findUnique({
     where: { id: shopId },
     select: { defaultCurrency: true },
@@ -82,7 +83,7 @@ function looksLikeCurrencyError(gqlErrors: any[], userErrors: any[]) {
     .join(" | ")
     .toLowerCase();
 
-  if (!msg.includes("currency")) return false; 
+  if (!msg.includes("currency")) return false;
 
   return (
     msg.includes("not enabled") ||
@@ -125,8 +126,17 @@ async function draftOrderCreate(args: {
   const gqlErrors = json?.errors ?? [];
   const userErrors = json?.data?.draftOrderCreate?.userErrors ?? [];
   const draftOrder = json?.data?.draftOrderCreate?.draftOrder ?? null;
+  const draftOrderId = draftOrder?.id ?? null;
 
-  return { resOk: res.ok, status: res.status, json, gqlErrors, userErrors, draftOrder };
+  return {
+    resOk: res.ok,
+    status: res.status,
+    json,
+    gqlErrors,
+    userErrors,
+    draftOrder,
+    draftOrderId,
+  };
 }
 
 export async function action({
@@ -143,7 +153,8 @@ export async function action({
     const wishlistId = params.id;
 
     if (!wishlistId) return corsJson(request, { error: "Missing id" }, 400);
-    if (request.method !== "POST") return corsJson(request, { error: "Method not allowed" }, 405);
+    if (request.method !== "POST")
+      return corsJson(request, { error: "Method not allowed" }, 405);
 
     const wishlist = await prisma.wishlist.findFirst({
       where: {
@@ -156,11 +167,13 @@ export async function action({
     });
 
     if (!wishlist) return corsJson(request, { error: "Wishlist not found" }, 404);
-    if (!wishlist.items.length) return corsJson(request, { error: "Wishlist is empty" }, 400);
+    if (!wishlist.items.length)
+      return corsJson(request, { error: "Wishlist is empty" }, 400);
 
     const body = await readBody(request);
     const note = (asString(body.note) || "").trim();
-    const countryCode = (asString((body as any).countryCode) || "").trim().toUpperCase() || null;
+    const countryCode =
+      (asString((body as any).countryCode) || "").trim().toUpperCase() || null;
 
     // create submission early
     const submission = await prisma.wishlistSubmission.create({
@@ -182,7 +195,11 @@ export async function action({
         select: { id: true, status: true, draftOrderId: true, createdAt: true },
       });
 
-      return corsJson(request, { error: "Missing offline access token for shop", submission: failed }, 500);
+      return corsJson(
+        request,
+        { error: "Missing offline access token for shop", submission: failed },
+        500
+      );
     }
 
     const requestedCurrency = await resolveRuleCurrency(identity.shop.id, countryCode);
@@ -195,25 +212,29 @@ export async function action({
 
     const customerGid = `gid://shopify/Customer/${identity.customer.customerId}`;
 
+    const baseTags = [
+      `wishlist:${wishlist.id}`,
+      `wishlistName:${wishlist.name}`,
+      `wishlist-submission`,
+      countryCode ? `country:${countryCode}` : null,
+      requestedCurrency ? `currencyRequested:${requestedCurrency}` : null,
+    ].filter(Boolean);
+
+    const baseNoteLines = [
+      `Wishlist: ${wishlist.id} (${wishlist.name})`,
+      countryCode ? `Country: ${countryCode}` : null,
+      requestedCurrency ? `Requested currency: ${requestedCurrency}` : null,
+      note ? `Customer note: ${note}` : null,
+    ].filter(Boolean);
+
     const baseInput: any = {
       customerId: customerGid,
-      note: [
-        `Wishlist: ${wishlist.id} (${wishlist.name})`,
-        countryCode ? `Country: ${countryCode}` : null,
-        requestedCurrency ? `Requested currency: ${requestedCurrency}` : null,
-        note ? `Customer note: ${note}` : null,
-      ].filter(Boolean).join("\n"),
-      tags: [
-        `wishlist:${wishlist.id}`,
-        `wishlistName:${wishlist.name}`,
-        `wishlist-submission`,
-        countryCode ? `country:${countryCode}` : null,
-        requestedCurrency ? `currencyRequested:${requestedCurrency}` : null,
-      ].filter(Boolean),
+      note: baseNoteLines.join("\n"),
+      tags: baseTags,
       lineItems,
     };
 
-    // attempt 1: requested currency
+    // attempt 1
     const attempt1Input = requestedCurrency
       ? { ...baseInput, presentmentCurrencyCode: requestedCurrency }
       : { ...baseInput };
@@ -224,29 +245,56 @@ export async function action({
       input: attempt1Input,
     });
 
-    // success
-    if (!attempt1.gqlErrors.length && !attempt1.userErrors.length) {
-      const draftOrderId = attempt1.draftOrder?.id ?? null;
+    // ✅ treat as success if draftOrderId exists (even if errors/warnings)
+    if (attempt1.draftOrderId) {
+      const nextStatus =
+        attempt1.gqlErrors.length || attempt1.userErrors.length
+          ? "created_with_warnings"
+          : "created";
+
       const updated = await prisma.wishlistSubmission.update({
         where: { id: submission.id },
-        data: { status: "created", draftOrderId },
+        data: { status: nextStatus, draftOrderId: attempt1.draftOrderId },
         select: { id: true, status: true, draftOrderId: true, createdAt: true },
       });
 
-      return corsJson(request, {
-        submission: updated,
-        countryCode,
-        currency: { requested: requestedCurrency, used: requestedCurrency ?? null, fallbackUsed: false },
-        _submitVersion: "draftOrderCreate-v3-currency-fallback",
-      }, 201);
+      return corsJson(
+        request,
+        {
+          submission: updated,
+          countryCode,
+          currency: {
+            requested: requestedCurrency,
+            used: requestedCurrency ?? null,
+            fallbackUsed: false,
+          },
+          warnings: { gqlErrors: attempt1.gqlErrors, userErrors: attempt1.userErrors },
+          _submitVersion: "draftOrderCreate-v4-success-on-id-currency-fallback",
+        },
+        201
+      );
     }
 
-    // if currency error and we had requested currency, retry with fallback
+    // retry on currency error (only if we tried a requested currency)
     if (requestedCurrency && looksLikeCurrencyError(attempt1.gqlErrors, attempt1.userErrors)) {
-      const attempt2Input =
-        fallbackCurrency
-          ? { ...baseInput, presentmentCurrencyCode: fallbackCurrency, tags: [...baseInput.tags, `currencyFallback:${fallbackCurrency}`] }
-          : { ...baseInput, tags: [...baseInput.tags, `currencyFallback:shop-default`] };
+      const attempt2Tags = [
+        ...baseTags,
+        fallbackCurrency ? `currencyFallback:${fallbackCurrency}` : `currencyFallback:shop-default`,
+      ].filter(Boolean);
+
+      const attempt2Note = [
+        ...baseNoteLines,
+        fallbackCurrency ? `Fallback currency: ${fallbackCurrency}` : `Fallback currency: (shop default)`,
+      ]
+        .filter(Boolean)
+        .join("\n");
+
+      const attempt2Input: any = {
+        ...baseInput,
+        note: attempt2Note,
+        tags: attempt2Tags,
+        ...(fallbackCurrency ? { presentmentCurrencyCode: fallbackCurrency } : {}),
+      };
 
       const attempt2 = await draftOrderCreate({
         shopDomain: identity.shop.shop,
@@ -254,20 +302,34 @@ export async function action({
         input: attempt2Input,
       });
 
-      if (!attempt2.gqlErrors.length && !attempt2.userErrors.length) {
-        const draftOrderId = attempt2.draftOrder?.id ?? null;
+      // ✅ treat as success if draftOrderId exists
+      if (attempt2.draftOrderId) {
+        const nextStatus =
+          attempt2.gqlErrors.length || attempt2.userErrors.length
+            ? "created_with_warnings"
+            : "created";
+
         const updated = await prisma.wishlistSubmission.update({
           where: { id: submission.id },
-          data: { status: "created", draftOrderId },
+          data: { status: nextStatus, draftOrderId: attempt2.draftOrderId },
           select: { id: true, status: true, draftOrderId: true, createdAt: true },
         });
 
-        return corsJson(request, {
-          submission: updated,
-          countryCode,
-          currency: { requested: requestedCurrency, used: fallbackCurrency ?? null, fallbackUsed: true },
-          _submitVersion: "draftOrderCreate-v3-currency-fallback",
-        }, 201);
+        return corsJson(
+          request,
+          {
+            submission: updated,
+            countryCode,
+            currency: {
+              requested: requestedCurrency,
+              used: fallbackCurrency ?? null,
+              fallbackUsed: true,
+            },
+            warnings: { gqlErrors: attempt2.gqlErrors, userErrors: attempt2.userErrors },
+            _submitVersion: "draftOrderCreate-v4-success-on-id-currency-fallback",
+          },
+          201
+        );
       }
 
       // fallback failed
@@ -276,34 +338,40 @@ export async function action({
         data: { status: "failed" },
       });
 
-      return corsJson(request, {
-        error: "Draft order create failed (after currency fallback)",
-        countryCode,
-        currency: { requested: requestedCurrency, fallback: fallbackCurrency ?? null },
-        attempt: "fallback",
-        gqlErrors: attempt2.gqlErrors,
-        userErrors: attempt2.userErrors,
-        raw: attempt2.json,
-        submission: { ...submission, status: "failed" },
-      }, 400);
+      return corsJson(
+        request,
+        {
+          error: "Draft order create failed (after currency fallback)",
+          countryCode,
+          currency: { requested: requestedCurrency, fallback: fallbackCurrency ?? null },
+          attempt: "fallback",
+          warnings: { gqlErrors: attempt2.gqlErrors, userErrors: attempt2.userErrors },
+          raw: attempt2.json,
+          submission: { ...submission, status: "failed" },
+        },
+        400
+      );
     }
 
-    // primary failed (non-currency or no requested currency)
+    // primary failed (no draftOrderId)
     await prisma.wishlistSubmission.update({
       where: { id: submission.id },
       data: { status: "failed" },
     });
 
-    return corsJson(request, {
-      error: "Draft order create failed",
-      countryCode,
-      currency: { requested: requestedCurrency, fallback: fallbackCurrency ?? null },
-      attempt: "primary",
-      gqlErrors: attempt1.gqlErrors,
-      userErrors: attempt1.userErrors,
-      raw: attempt1.json,
-      submission: { ...submission, status: "failed" },
-    }, 400);
+    return corsJson(
+      request,
+      {
+        error: "Draft order create failed",
+        countryCode,
+        currency: { requested: requestedCurrency, fallback: fallbackCurrency ?? null },
+        attempt: "primary",
+        warnings: { gqlErrors: attempt1.gqlErrors, userErrors: attempt1.userErrors },
+        raw: attempt1.json,
+        submission: { ...submission, status: "failed" },
+      },
+      400
+    );
   } catch (e: any) {
     return corsJson(request, { error: e?.message || "Unauthorized" }, 401);
   }
