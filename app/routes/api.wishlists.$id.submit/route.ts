@@ -35,7 +35,6 @@ export async function loader({ request }: { request: Request }) {
   return corsJson(request, { error: "Method not allowed" }, 405);
 }
 
-// Prefer OFFLINE token (isOnline=false). Fall back to any token only if needed.
 async function getShopAccessToken(shopDomain: string) {
   const offline = await prisma.session.findFirst({
     where: { shop: shopDomain, isOnline: false },
@@ -66,7 +65,6 @@ async function resolveRuleCurrency(shopId: string, countryCode: string | null) {
 }
 
 async function resolveShopDefaultCurrency(shopId: string) {
-  // Requires Shop.defaultCurrency String? in schema + migration applied.
   const shop = await prisma.shop.findUnique({
     where: { id: shopId },
     select: { defaultCurrency: true },
@@ -100,27 +98,24 @@ async function draftOrderCreate(args: {
   accessToken: string;
   input: any;
 }) {
-  const res = await fetch(
-    `https://${args.shopDomain}/admin/api/${ADMIN_API_VERSION}/graphql.json`,
-    {
-      method: "POST",
-      headers: {
-        "X-Shopify-Access-Token": args.accessToken,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        query: `#graphql
-          mutation CreateDraftOrder($input: DraftOrderInput!) {
-            draftOrderCreate(input: $input) {
-              draftOrder { id name }
-              userErrors { field message }
-            }
+  const res = await fetch(`https://${args.shopDomain}/admin/api/${ADMIN_API_VERSION}/graphql.json`, {
+    method: "POST",
+    headers: {
+      "X-Shopify-Access-Token": args.accessToken,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      query: `#graphql
+        mutation CreateDraftOrder($input: DraftOrderInput!) {
+          draftOrderCreate(input: $input) {
+            draftOrder { id name }
+            userErrors { field message }
           }
-        `,
-        variables: { input: args.input },
-      }),
-    }
-  );
+        }
+      `,
+      variables: { input: args.input },
+    }),
+  });
 
   const json: any = await res.json();
   const gqlErrors = json?.errors ?? [];
@@ -128,15 +123,35 @@ async function draftOrderCreate(args: {
   const draftOrder = json?.data?.draftOrderCreate?.draftOrder ?? null;
   const draftOrderId = draftOrder?.id ?? null;
 
-  return {
-    resOk: res.ok,
-    status: res.status,
-    json,
-    gqlErrors,
-    userErrors,
-    draftOrder,
-    draftOrderId,
-  };
+  return { resOk: res.ok, status: res.status, json, gqlErrors, userErrors, draftOrder, draftOrderId };
+}
+
+async function findDraftOrderIdByTag(args: {
+  shopDomain: string;
+  accessToken: string;
+  tag: string;
+}) {
+  const res = await fetch(`https://${args.shopDomain}/admin/api/${ADMIN_API_VERSION}/graphql.json`, {
+    method: "POST",
+    headers: {
+      "X-Shopify-Access-Token": args.accessToken,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      query: `#graphql
+        query FindDraftOrder($q: String!) {
+          draftOrders(first: 5, query: $q, sortKey: UPDATED_AT, reverse: true) {
+            nodes { id name }
+          }
+        }
+      `,
+      variables: { q: `tag:${args.tag}` },
+    }),
+  });
+
+  const json: any = await res.json();
+  const node = json?.data?.draftOrders?.nodes?.[0];
+  return node?.id ?? null;
 }
 
 export async function action({
@@ -153,8 +168,7 @@ export async function action({
     const wishlistId = params.id;
 
     if (!wishlistId) return corsJson(request, { error: "Missing id" }, 400);
-    if (request.method !== "POST")
-      return corsJson(request, { error: "Method not allowed" }, 405);
+    if (request.method !== "POST") return corsJson(request, { error: "Method not allowed" }, 405);
 
     const wishlist = await prisma.wishlist.findFirst({
       where: {
@@ -167,15 +181,13 @@ export async function action({
     });
 
     if (!wishlist) return corsJson(request, { error: "Wishlist not found" }, 404);
-    if (!wishlist.items.length)
-      return corsJson(request, { error: "Wishlist is empty" }, 400);
+    if (!wishlist.items.length) return corsJson(request, { error: "Wishlist is empty" }, 400);
 
     const body = await readBody(request);
     const note = (asString(body.note) || "").trim();
     const countryCode =
       (asString((body as any).countryCode) || "").trim().toUpperCase() || null;
 
-    // create submission early
     const submission = await prisma.wishlistSubmission.create({
       data: {
         shopId: identity.shop.id,
@@ -195,11 +207,7 @@ export async function action({
         select: { id: true, status: true, draftOrderId: true, createdAt: true },
       });
 
-      return corsJson(
-        request,
-        { error: "Missing offline access token for shop", submission: failed },
-        500
-      );
+      return corsJson(request, { error: "Missing offline access token for shop", submission: failed }, 500);
     }
 
     const requestedCurrency = await resolveRuleCurrency(identity.shop.id, countryCode);
@@ -212,16 +220,21 @@ export async function action({
 
     const customerGid = `gid://shopify/Customer/${identity.customer.customerId}`;
 
+    // IMPORTANT: unique tag per submission so we can recover the ID
+    const submissionTag = `wishlistSubmission:${submission.id}`;
+
     const baseTags = [
       `wishlist:${wishlist.id}`,
       `wishlistName:${wishlist.name}`,
       `wishlist-submission`,
+      submissionTag,
       countryCode ? `country:${countryCode}` : null,
       requestedCurrency ? `currencyRequested:${requestedCurrency}` : null,
     ].filter(Boolean);
 
     const baseNoteLines = [
       `Wishlist: ${wishlist.id} (${wishlist.name})`,
+      `Submission: ${submission.id}`,
       countryCode ? `Country: ${countryCode}` : null,
       requestedCurrency ? `Requested currency: ${requestedCurrency}` : null,
       note ? `Customer note: ${note}` : null,
@@ -245,8 +258,17 @@ export async function action({
       input: attempt1Input,
     });
 
-    // ✅ treat as success if draftOrderId exists (even if errors/warnings)
-    if (attempt1.draftOrderId) {
+    // ✅ success if we got an id OR we can recover it by tag
+    let draftOrderId: string | null = attempt1.draftOrderId;
+    if (!draftOrderId) {
+      draftOrderId = await findDraftOrderIdByTag({
+        shopDomain: identity.shop.shop,
+        accessToken,
+        tag: submissionTag,
+      });
+    }
+
+    if (draftOrderId) {
       const nextStatus =
         attempt1.gqlErrors.length || attempt1.userErrors.length
           ? "created_with_warnings"
@@ -254,7 +276,7 @@ export async function action({
 
       const updated = await prisma.wishlistSubmission.update({
         where: { id: submission.id },
-        data: { status: nextStatus, draftOrderId: attempt1.draftOrderId },
+        data: { status: nextStatus, draftOrderId },
         select: { id: true, status: true, draftOrderId: true, createdAt: true },
       });
 
@@ -263,19 +285,16 @@ export async function action({
         {
           submission: updated,
           countryCode,
-          currency: {
-            requested: requestedCurrency,
-            used: requestedCurrency ?? null,
-            fallbackUsed: false,
-          },
+          currency: { requested: requestedCurrency, used: requestedCurrency ?? null, fallbackUsed: false },
           warnings: { gqlErrors: attempt1.gqlErrors, userErrors: attempt1.userErrors },
-          _submitVersion: "draftOrderCreate-v4-success-on-id-currency-fallback",
+          recoveredByTag: !attempt1.draftOrderId && !!draftOrderId,
+          _submitVersion: "draftOrderCreate-v5-recover-id-by-tag",
         },
         201
       );
     }
 
-    // retry on currency error (only if we tried a requested currency)
+    // retry on currency error
     if (requestedCurrency && looksLikeCurrencyError(attempt1.gqlErrors, attempt1.userErrors)) {
       const attempt2Tags = [
         ...baseTags,
@@ -302,8 +321,16 @@ export async function action({
         input: attempt2Input,
       });
 
-      // ✅ treat as success if draftOrderId exists
-      if (attempt2.draftOrderId) {
+      let draftOrderId2: string | null = attempt2.draftOrderId;
+      if (!draftOrderId2) {
+        draftOrderId2 = await findDraftOrderIdByTag({
+          shopDomain: identity.shop.shop,
+          accessToken,
+          tag: submissionTag,
+        });
+      }
+
+      if (draftOrderId2) {
         const nextStatus =
           attempt2.gqlErrors.length || attempt2.userErrors.length
             ? "created_with_warnings"
@@ -311,7 +338,7 @@ export async function action({
 
         const updated = await prisma.wishlistSubmission.update({
           where: { id: submission.id },
-          data: { status: nextStatus, draftOrderId: attempt2.draftOrderId },
+          data: { status: nextStatus, draftOrderId: draftOrderId2 },
           select: { id: true, status: true, draftOrderId: true, createdAt: true },
         });
 
@@ -320,19 +347,15 @@ export async function action({
           {
             submission: updated,
             countryCode,
-            currency: {
-              requested: requestedCurrency,
-              used: fallbackCurrency ?? null,
-              fallbackUsed: true,
-            },
+            currency: { requested: requestedCurrency, used: fallbackCurrency ?? null, fallbackUsed: true },
             warnings: { gqlErrors: attempt2.gqlErrors, userErrors: attempt2.userErrors },
-            _submitVersion: "draftOrderCreate-v4-success-on-id-currency-fallback",
+            recoveredByTag: !attempt2.draftOrderId && !!draftOrderId2,
+            _submitVersion: "draftOrderCreate-v5-recover-id-by-tag",
           },
           201
         );
       }
 
-      // fallback failed
       await prisma.wishlistSubmission.update({
         where: { id: submission.id },
         data: { status: "failed" },
@@ -353,7 +376,6 @@ export async function action({
       );
     }
 
-    // primary failed (no draftOrderId)
     await prisma.wishlistSubmission.update({
       where: { id: submission.id },
       data: { status: "failed" },
