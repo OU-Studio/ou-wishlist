@@ -35,6 +35,22 @@ export async function loader({ request }: { request: Request }) {
   return corsJson(request, { error: "Method not allowed" }, 405);
 }
 
+/** Shopify tags: max 40 chars */
+function safeTag(input: string) {
+  return input.replace(/\s+/g, " ").trim().slice(0, 40);
+}
+
+/** Key/value tag, clipped to 40 total, safe characters */
+function tagKV(key: string, value: string) {
+  const cleanKey = key.replace(/[^a-zA-Z0-9_-]/g, "").slice(0, 20) || "k";
+  const cleanVal = value
+    .replace(/\s+/g, "-")
+    .replace(/[^a-zA-Z0-9_-]/g, "")
+    .slice(0, 30);
+  return safeTag(`${cleanKey}:${cleanVal}`);
+}
+
+// Prefer OFFLINE token (isOnline=false). Fall back to any token only if needed.
 async function getShopAccessToken(shopDomain: string) {
   const offline = await prisma.session.findFirst({
     where: { shop: shopDomain, isOnline: false },
@@ -64,11 +80,15 @@ async function resolveRuleCurrency(shopId: string, countryCode: string | null) {
   return cur.length === 3 ? cur : null;
 }
 
+// NOTE: this requires Shop.defaultCurrency in your Prisma schema.
+// If you don't have it, return null (and you'll just omit presentmentCurrencyCode on fallback).
 async function resolveShopDefaultCurrency(shopId: string) {
   const shop = await prisma.shop.findUnique({
     where: { id: shopId },
+    // @ts-ignore - only valid if you added defaultCurrency to Shop model
     select: { defaultCurrency: true },
   });
+  // @ts-ignore
   const cur = (shop?.defaultCurrency || "").trim().toUpperCase();
   return cur.length === 3 ? cur : null;
 }
@@ -98,24 +118,27 @@ async function draftOrderCreate(args: {
   accessToken: string;
   input: any;
 }) {
-  const res = await fetch(`https://${args.shopDomain}/admin/api/${ADMIN_API_VERSION}/graphql.json`, {
-    method: "POST",
-    headers: {
-      "X-Shopify-Access-Token": args.accessToken,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      query: `#graphql
-        mutation CreateDraftOrder($input: DraftOrderInput!) {
-          draftOrderCreate(input: $input) {
-            draftOrder { id name }
-            userErrors { field message }
+  const res = await fetch(
+    `https://${args.shopDomain}/admin/api/${ADMIN_API_VERSION}/graphql.json`,
+    {
+      method: "POST",
+      headers: {
+        "X-Shopify-Access-Token": args.accessToken,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        query: `#graphql
+          mutation CreateDraftOrder($input: DraftOrderInput!) {
+            draftOrderCreate(input: $input) {
+              draftOrder { id name }
+              userErrors { field message }
+            }
           }
-        }
-      `,
-      variables: { input: args.input },
-    }),
-  });
+        `,
+        variables: { input: args.input },
+      }),
+    }
+  );
 
   const json: any = await res.json();
   const gqlErrors = json?.errors ?? [];
@@ -123,7 +146,15 @@ async function draftOrderCreate(args: {
   const draftOrder = json?.data?.draftOrderCreate?.draftOrder ?? null;
   const draftOrderId = draftOrder?.id ?? null;
 
-  return { resOk: res.ok, status: res.status, json, gqlErrors, userErrors, draftOrder, draftOrderId };
+  return {
+    resOk: res.ok,
+    status: res.status,
+    json,
+    gqlErrors,
+    userErrors,
+    draftOrder,
+    draftOrderId,
+  };
 }
 
 async function findDraftOrderIdByTag(args: {
@@ -131,23 +162,26 @@ async function findDraftOrderIdByTag(args: {
   accessToken: string;
   tag: string;
 }) {
-  const res = await fetch(`https://${args.shopDomain}/admin/api/${ADMIN_API_VERSION}/graphql.json`, {
-    method: "POST",
-    headers: {
-      "X-Shopify-Access-Token": args.accessToken,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      query: `#graphql
-        query FindDraftOrder($q: String!) {
-          draftOrders(first: 5, query: $q, sortKey: UPDATED_AT, reverse: true) {
-            nodes { id name }
+  const res = await fetch(
+    `https://${args.shopDomain}/admin/api/${ADMIN_API_VERSION}/graphql.json`,
+    {
+      method: "POST",
+      headers: {
+        "X-Shopify-Access-Token": args.accessToken,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        query: `#graphql
+          query FindDraftOrder($q: String!) {
+            draftOrders(first: 5, query: $q, sortKey: UPDATED_AT, reverse: true) {
+              nodes { id name }
+            }
           }
-        }
-      `,
-      variables: { q: `tag:${args.tag}` },
-    }),
-  });
+        `,
+        variables: { q: `tag:${args.tag}` },
+      }),
+    }
+  );
 
   const json: any = await res.json();
   const node = json?.data?.draftOrders?.nodes?.[0];
@@ -168,7 +202,8 @@ export async function action({
     const wishlistId = params.id;
 
     if (!wishlistId) return corsJson(request, { error: "Missing id" }, 400);
-    if (request.method !== "POST") return corsJson(request, { error: "Method not allowed" }, 405);
+    if (request.method !== "POST")
+      return corsJson(request, { error: "Method not allowed" }, 405);
 
     const wishlist = await prisma.wishlist.findFirst({
       where: {
@@ -181,13 +216,15 @@ export async function action({
     });
 
     if (!wishlist) return corsJson(request, { error: "Wishlist not found" }, 404);
-    if (!wishlist.items.length) return corsJson(request, { error: "Wishlist is empty" }, 400);
+    if (!wishlist.items.length)
+      return corsJson(request, { error: "Wishlist is empty" }, 400);
 
     const body = await readBody(request);
     const note = (asString(body.note) || "").trim();
     const countryCode =
       (asString((body as any).countryCode) || "").trim().toUpperCase() || null;
 
+    // Create submission early
     const submission = await prisma.wishlistSubmission.create({
       data: {
         shopId: identity.shop.id,
@@ -207,7 +244,11 @@ export async function action({
         select: { id: true, status: true, draftOrderId: true, createdAt: true },
       });
 
-      return corsJson(request, { error: "Missing offline access token for shop", submission: failed }, 500);
+      return corsJson(
+        request,
+        { error: "Missing offline access token for shop", submission: failed },
+        500
+      );
     }
 
     const requestedCurrency = await resolveRuleCurrency(identity.shop.id, countryCode);
@@ -220,18 +261,19 @@ export async function action({
 
     const customerGid = `gid://shopify/Customer/${identity.customer.customerId}`;
 
-    // IMPORTANT: unique tag per submission so we can recover the ID
-    const submissionTag = `wishlistSubmission:${submission.id}`;
+    // ✅ short, always-valid tag (<= 40)
+    const submissionTag = safeTag(`wsSub:${submission.id.slice(-12)}`);
 
+    // ✅ tags must be <= 40 each (NO wishlistName tag)
     const baseTags = [
-      `wishlist:${wishlist.id}`,
-      `wishlistName:${wishlist.name}`,
-      `wishlist-submission`,
+      safeTag("wishlist-submission"),
+      tagKV("wishlist", wishlist.id),
       submissionTag,
-      countryCode ? `country:${countryCode}` : null,
-      requestedCurrency ? `currencyRequested:${requestedCurrency}` : null,
-    ].filter(Boolean);
+      countryCode ? tagKV("country", countryCode) : null,
+      requestedCurrency ? tagKV("curReq", requestedCurrency) : null,
+    ].filter(Boolean) as string[];
 
+    // Put long values in the note, not tags
     const baseNoteLines = [
       `Wishlist: ${wishlist.id} (${wishlist.name})`,
       `Submission: ${submission.id}`,
@@ -247,7 +289,7 @@ export async function action({
       lineItems,
     };
 
-    // attempt 1
+    // attempt 1 (requested currency if present)
     const attempt1Input = requestedCurrency
       ? { ...baseInput, presentmentCurrencyCode: requestedCurrency }
       : { ...baseInput };
@@ -258,7 +300,7 @@ export async function action({
       input: attempt1Input,
     });
 
-    // ✅ success if we got an id OR we can recover it by tag
+    // success if draftOrderId exists (or recover by tag)
     let draftOrderId: string | null = attempt1.draftOrderId;
     if (!draftOrderId) {
       draftOrderId = await findDraftOrderIdByTag({
@@ -285,10 +327,14 @@ export async function action({
         {
           submission: updated,
           countryCode,
-          currency: { requested: requestedCurrency, used: requestedCurrency ?? null, fallbackUsed: false },
+          currency: {
+            requested: requestedCurrency,
+            used: requestedCurrency ?? null,
+            fallbackUsed: false,
+          },
           warnings: { gqlErrors: attempt1.gqlErrors, userErrors: attempt1.userErrors },
           recoveredByTag: !attempt1.draftOrderId && !!draftOrderId,
-          _submitVersion: "draftOrderCreate-v5-recover-id-by-tag",
+          _submitVersion: "draftOrderCreate-v6-safe-tags",
         },
         201
       );
@@ -298,7 +344,7 @@ export async function action({
     if (requestedCurrency && looksLikeCurrencyError(attempt1.gqlErrors, attempt1.userErrors)) {
       const attempt2Tags = [
         ...baseTags,
-        fallbackCurrency ? `currencyFallback:${fallbackCurrency}` : `currencyFallback:shop-default`,
+        fallbackCurrency ? tagKV("curFb", fallbackCurrency) : safeTag("curFb:shop"),
       ].filter(Boolean);
 
       const attempt2Note = [
@@ -347,10 +393,14 @@ export async function action({
           {
             submission: updated,
             countryCode,
-            currency: { requested: requestedCurrency, used: fallbackCurrency ?? null, fallbackUsed: true },
+            currency: {
+              requested: requestedCurrency,
+              used: fallbackCurrency ?? null,
+              fallbackUsed: true,
+            },
             warnings: { gqlErrors: attempt2.gqlErrors, userErrors: attempt2.userErrors },
             recoveredByTag: !attempt2.draftOrderId && !!draftOrderId2,
-            _submitVersion: "draftOrderCreate-v5-recover-id-by-tag",
+            _submitVersion: "draftOrderCreate-v6-safe-tags",
           },
           201
         );
