@@ -37,6 +37,7 @@ model Session {
 model Shop {
   id        String   @id @default(cuid())
   shop      String   @unique // outesting1.myshopify.com
+  defaultCurrency String? // e.g. "CAD"
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 

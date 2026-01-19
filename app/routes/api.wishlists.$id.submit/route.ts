@@ -35,19 +35,24 @@ export async function loader({ request }: { request: Request }) {
   return corsJson(request, { error: "Method not allowed" }, 405);
 }
 
+// Prefer OFFLINE token (isOnline=false). Fall back to any token only if needed.
 async function getShopAccessToken(shopDomain: string) {
-  // Ideally choose OFFLINE session. If you can, filter by isOnline=false.
-  const sess = await prisma.session.findFirst({
-    where: { shop: shopDomain },
-    select: { accessToken: true, isOnline: true },
-    orderBy: { expires: "desc" }, // if online sessions exist, pick newest
+  const offline = await prisma.session.findFirst({
+    where: { shop: shopDomain, isOnline: false },
+    select: { accessToken: true },
   });
-  return sess?.accessToken ?? null;
+  if (offline?.accessToken) return offline.accessToken;
+
+  const any = await prisma.session.findFirst({
+    where: { shop: shopDomain },
+    select: { accessToken: true },
+    orderBy: { expires: "desc" },
+  });
+  return any?.accessToken ?? null;
 }
 
-async function resolvePresentmentCurrency(shopId: string, countryCode: string | null) {
+async function resolveRuleCurrency(shopId: string, countryCode: string | null) {
   if (!countryCode) return null;
-
   const cc = countryCode.trim().toUpperCase();
   if (cc.length !== 2) return null;
 
@@ -58,6 +63,70 @@ async function resolvePresentmentCurrency(shopId: string, countryCode: string | 
 
   const cur = (rule?.currency || "").trim().toUpperCase();
   return cur.length === 3 ? cur : null;
+}
+
+async function resolveShopDefaultCurrency(shopId: string) {
+  const shop = await prisma.shop.findUnique({
+    where: { id: shopId },
+    select: { defaultCurrency: true },
+  });
+  const cur = (shop?.defaultCurrency || "").trim().toUpperCase();
+  return cur.length === 3 ? cur : null;
+}
+
+function looksLikeCurrencyError(gqlErrors: any[], userErrors: any[]) {
+  const msg = [
+    ...(gqlErrors || []).map((e) => e?.message).filter(Boolean),
+    ...(userErrors || []).map((e) => e?.message).filter(Boolean),
+  ]
+    .join(" | ")
+    .toLowerCase();
+
+  if (!msg.includes("currency")) return false; 
+
+  return (
+    msg.includes("not enabled") ||
+    msg.includes("not supported") ||
+    msg.includes("invalid") ||
+    msg.includes("not available") ||
+    msg.includes("not configured") ||
+    msg.includes("isn't available")
+  );
+}
+
+async function draftOrderCreate(args: {
+  shopDomain: string;
+  accessToken: string;
+  input: any;
+}) {
+  const res = await fetch(
+    `https://${args.shopDomain}/admin/api/${ADMIN_API_VERSION}/graphql.json`,
+    {
+      method: "POST",
+      headers: {
+        "X-Shopify-Access-Token": args.accessToken,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        query: `#graphql
+          mutation CreateDraftOrder($input: DraftOrderInput!) {
+            draftOrderCreate(input: $input) {
+              draftOrder { id name }
+              userErrors { field message }
+            }
+          }
+        `,
+        variables: { input: args.input },
+      }),
+    }
+  );
+
+  const json: any = await res.json();
+  const gqlErrors = json?.errors ?? [];
+  const userErrors = json?.data?.draftOrderCreate?.userErrors ?? [];
+  const draftOrder = json?.data?.draftOrderCreate?.draftOrder ?? null;
+
+  return { resOk: res.ok, status: res.status, json, gqlErrors, userErrors, draftOrder };
 }
 
 export async function action({
@@ -93,7 +162,7 @@ export async function action({
     const note = (asString(body.note) || "").trim();
     const countryCode = (asString((body as any).countryCode) || "").trim().toUpperCase() || null;
 
-    // Create a submission row immediately (queued), then update it based on outcome
+    // create submission early
     const submission = await prisma.wishlistSubmission.create({
       data: {
         shopId: identity.shop.id,
@@ -107,133 +176,134 @@ export async function action({
 
     const accessToken = await getShopAccessToken(identity.shop.shop);
     if (!accessToken) {
-      await prisma.wishlistSubmission.update({
+      const failed = await prisma.wishlistSubmission.update({
         where: { id: submission.id },
         data: { status: "failed" },
+        select: { id: true, status: true, draftOrderId: true, createdAt: true },
       });
 
-      return corsJson(
-        request,
-        {
-          error: "Missing offline access token for shop",
-          submission: { ...submission, status: "failed" },
-        },
-        500
-      );
+      return corsJson(request, { error: "Missing offline access token for shop", submission: failed }, 500);
     }
 
-    const presentmentCurrencyCode = await resolvePresentmentCurrency(identity.shop.id, countryCode);
+    const requestedCurrency = await resolveRuleCurrency(identity.shop.id, countryCode);
+    const fallbackCurrency = await resolveShopDefaultCurrency(identity.shop.id);
 
     const lineItems = wishlist.items.map((i) => ({
-      variantId: i.variantId, // gid://shopify/ProductVariant/...
+      variantId: i.variantId,
       quantity: i.quantity,
     }));
 
-    const gql = `#graphql
-      mutation CreateDraftOrder($input: DraftOrderInput!) {
-        draftOrderCreate(input: $input) {
-          draftOrder { id name }
-          userErrors { field message }
-        }
-      }
-    `;
-
-    const draftNote = [
-      `Wishlist: ${wishlist.id} (${wishlist.name})`,
-      countryCode ? `Country: ${countryCode}` : null,
-      presentmentCurrencyCode ? `Currency: ${presentmentCurrencyCode}` : null,
-      note ? `Customer note: ${note}` : null,
-    ]
-      .filter(Boolean)
-      .join("\n");
-
     const customerGid = `gid://shopify/Customer/${identity.customer.customerId}`;
 
-    const res = await fetch(`https://${identity.shop.shop}/admin/api/${ADMIN_API_VERSION}/graphql.json`, {
-      method: "POST",
-      headers: {
-        "X-Shopify-Access-Token": accessToken,
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify({
-        query: gql,
-        variables: {
-          input: {
-            customerId: customerGid,
-            note: draftNote,
-            tags: [
-              `wishlist:${wishlist.id}`,
-              `wishlistName:${wishlist.name}`,
-              `wishlist-submission`,
-              countryCode ? `country:${countryCode}` : null,
-              presentmentCurrencyCode ? `currency:${presentmentCurrencyCode}` : null,
-            ].filter(Boolean),
-            lineItems,
-            ...(presentmentCurrencyCode ? { presentmentCurrencyCode } : {}),
-          },
-        },
-      }),
+    const baseInput: any = {
+      customerId: customerGid,
+      note: [
+        `Wishlist: ${wishlist.id} (${wishlist.name})`,
+        countryCode ? `Country: ${countryCode}` : null,
+        requestedCurrency ? `Requested currency: ${requestedCurrency}` : null,
+        note ? `Customer note: ${note}` : null,
+      ].filter(Boolean).join("\n"),
+      tags: [
+        `wishlist:${wishlist.id}`,
+        `wishlistName:${wishlist.name}`,
+        `wishlist-submission`,
+        countryCode ? `country:${countryCode}` : null,
+        requestedCurrency ? `currencyRequested:${requestedCurrency}` : null,
+      ].filter(Boolean),
+      lineItems,
+    };
+
+    // attempt 1: requested currency
+    const attempt1Input = requestedCurrency
+      ? { ...baseInput, presentmentCurrencyCode: requestedCurrency }
+      : { ...baseInput };
+
+    const attempt1 = await draftOrderCreate({
+      shopDomain: identity.shop.shop,
+      accessToken,
+      input: attempt1Input,
     });
 
-    const json: any = await res.json();
-
-    if (json?.errors?.length) {
-      await prisma.wishlistSubmission.update({
+    // success
+    if (!attempt1.gqlErrors.length && !attempt1.userErrors.length) {
+      const draftOrderId = attempt1.draftOrder?.id ?? null;
+      const updated = await prisma.wishlistSubmission.update({
         where: { id: submission.id },
-        data: { status: "failed" },
+        data: { status: "created", draftOrderId },
+        select: { id: true, status: true, draftOrderId: true, createdAt: true },
       });
 
-      return corsJson(
-        request,
-        {
-          error: "GraphQL error",
-          errors: json.errors,
-          submission: { ...submission, status: "failed" },
-          countryCode,
-          presentmentCurrencyCode,
-        },
-        400
-      );
-    }
-
-    const userErrors = json?.data?.draftOrderCreate?.userErrors ?? [];
-    if (userErrors.length) {
-      await prisma.wishlistSubmission.update({
-        where: { id: submission.id },
-        data: { status: "failed" },
-      });
-
-      return corsJson(
-        request,
-        {
-          error: "Draft order create failed",
-          userErrors,
-          submission: { ...submission, status: "failed" },
-          countryCode,
-          presentmentCurrencyCode,
-        },
-        400
-      );
-    }
-
-    const draftOrderId = json?.data?.draftOrderCreate?.draftOrder?.id ?? null;
-
-    const updated = await prisma.wishlistSubmission.update({
-      where: { id: submission.id },
-      data: { status: "created", draftOrderId },
-      select: { id: true, status: true, draftOrderId: true, createdAt: true },
-    });
-
-    return corsJson(
-      request,
-      {
+      return corsJson(request, {
         submission: updated,
         countryCode,
-        presentmentCurrencyCode,
-        _submitVersion: "draftOrderCreate-v2-currency-rules",
-      },
-      201
-    );
+        currency: { requested: requestedCurrency, used: requestedCurrency ?? null, fallbackUsed: false },
+        _submitVersion: "draftOrderCreate-v3-currency-fallback",
+      }, 201);
+    }
+
+    // if currency error and we had requested currency, retry with fallback
+    if (requestedCurrency && looksLikeCurrencyError(attempt1.gqlErrors, attempt1.userErrors)) {
+      const attempt2Input =
+        fallbackCurrency
+          ? { ...baseInput, presentmentCurrencyCode: fallbackCurrency, tags: [...baseInput.tags, `currencyFallback:${fallbackCurrency}`] }
+          : { ...baseInput, tags: [...baseInput.tags, `currencyFallback:shop-default`] };
+
+      const attempt2 = await draftOrderCreate({
+        shopDomain: identity.shop.shop,
+        accessToken,
+        input: attempt2Input,
+      });
+
+      if (!attempt2.gqlErrors.length && !attempt2.userErrors.length) {
+        const draftOrderId = attempt2.draftOrder?.id ?? null;
+        const updated = await prisma.wishlistSubmission.update({
+          where: { id: submission.id },
+          data: { status: "created", draftOrderId },
+          select: { id: true, status: true, draftOrderId: true, createdAt: true },
+        });
+
+        return corsJson(request, {
+          submission: updated,
+          countryCode,
+          currency: { requested: requestedCurrency, used: fallbackCurrency ?? null, fallbackUsed: true },
+          _submitVersion: "draftOrderCreate-v3-currency-fallback",
+        }, 201);
+      }
+
+      // fallback failed
+      await prisma.wishlistSubmission.update({
+        where: { id: submission.id },
+        data: { status: "failed" },
+      });
+
+      return corsJson(request, {
+        error: "Draft order create failed (after currency fallback)",
+        countryCode,
+        currency: { requested: requestedCurrency, fallback: fallbackCurrency ?? null },
+        attempt: "fallback",
+        gqlErrors: attempt2.gqlErrors,
+        userErrors: attempt2.userErrors,
+        raw: attempt2.json,
+        submission: { ...submission, status: "failed" },
+      }, 400);
+    }
+
+    // primary failed (non-currency or no requested currency)
+    await prisma.wishlistSubmission.update({
+      where: { id: submission.id },
+      data: { status: "failed" },
+    });
+
+    return corsJson(request, {
+      error: "Draft order create failed",
+      countryCode,
+      currency: { requested: requestedCurrency, fallback: fallbackCurrency ?? null },
+      attempt: "primary",
+      gqlErrors: attempt1.gqlErrors,
+      userErrors: attempt1.userErrors,
+      raw: attempt1.json,
+      submission: { ...submission, status: "failed" },
+    }, 400);
   } catch (e: any) {
     return corsJson(request, { error: e?.message || "Unauthorized" }, 401);
   }

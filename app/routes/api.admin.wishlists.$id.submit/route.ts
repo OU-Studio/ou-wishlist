@@ -2,10 +2,51 @@ import prisma from "../../db.server";
 import { readBody, asString } from "../../utils/api.server";
 import { authenticate } from "../../shopify.server";
 
-const ADMIN_API_VERSION = "2025-10";
-
 function json(data: unknown, status = 200) {
   return Response.json(data, { status });
+}
+
+function looksLikeCurrencyError(gqlErrors: any[], userErrors: any[]) {
+  const msg = [
+    ...(gqlErrors || []).map((e) => e?.message).filter(Boolean),
+    ...(userErrors || []).map((e) => e?.message).filter(Boolean),
+  ]
+    .join(" | ")
+    .toLowerCase();
+
+  if (!msg.includes("currency")) return false;
+
+  return (
+    msg.includes("not enabled") ||
+    msg.includes("not supported") ||
+    msg.includes("invalid") ||
+    msg.includes("not available") ||
+    msg.includes("not configured") ||
+    msg.includes("isn't available")
+  );
+}
+
+async function resolveRuleCurrency(shopId: string, countryCode: string | null) {
+  if (!countryCode) return null;
+  const cc = countryCode.trim().toUpperCase();
+  if (cc.length !== 2) return null;
+
+  const rule = await prisma.marketCurrencyRule.findUnique({
+    where: { shopId_countryCode: { shopId, countryCode: cc } },
+    select: { currency: true },
+  });
+
+  const cur = (rule?.currency || "").trim().toUpperCase();
+  return cur.length === 3 ? cur : null;
+}
+
+async function resolveShopDefaultCurrency(shopId: string) {
+  const shop = await prisma.shop.findUnique({
+    where: { id: shopId },
+    select: { defaultCurrency: true },
+  });
+  const cur = (shop?.defaultCurrency || "").trim().toUpperCase();
+  return cur.length === 3 ? cur : null;
 }
 
 export async function action({
@@ -39,28 +80,13 @@ export async function action({
   const note = (asString(body.note) || "").trim();
   const countryCode = (asString((body as any).countryCode) || "").trim().toUpperCase() || null;
 
-  const presentmentCurrencyCode = countryCode
-    ? (
-        await prisma.marketCurrencyRule.findUnique({
-          where: { shopId_countryCode: { shopId: shop.id, countryCode } },
-          select: { currency: true },
-        })
-      )?.currency?.trim()?.toUpperCase() ?? null
-    : null;
+  const requestedCurrency = await resolveRuleCurrency(shop.id, countryCode);
+  const fallbackCurrency = await resolveShopDefaultCurrency(shop.id);
 
   const lineItems = wishlist.items.map((i) => ({
     variantId: i.variantId,
     quantity: i.quantity,
   }));
-
-  const draftNote = [
-    `Wishlist: ${wishlist.id} (${wishlist.name})`,
-    countryCode ? `Country: ${countryCode}` : null,
-    presentmentCurrencyCode ? `Currency: ${presentmentCurrencyCode}` : null,
-    note ? `Staff note: ${note}` : null,
-  ]
-    .filter(Boolean)
-    .join("\n");
 
   const customerGid = `gid://shopify/Customer/${wishlist.customer.customerId}`;
 
@@ -73,56 +99,109 @@ export async function action({
     }
   `;
 
-  const resp = await admin.graphql(gql, {
-    variables: {
-      input: {
-        customerId: customerGid,
-        note: draftNote,
-        tags: [
-          `wishlist:${wishlist.id}`,
-          `wishlistName:${wishlist.name}`,
-          `wishlist-admin-submit`,
-          countryCode ? `country:${countryCode}` : null,
-          presentmentCurrencyCode ? `currency:${presentmentCurrencyCode}` : null,
-        ].filter(Boolean),
-        lineItems,
-        ...(presentmentCurrencyCode ? { presentmentCurrencyCode } : {}),
+  const baseInput: any = {
+    customerId: customerGid,
+    note: [
+      `Wishlist: ${wishlist.id} (${wishlist.name})`,
+      countryCode ? `Country: ${countryCode}` : null,
+      requestedCurrency ? `Requested currency: ${requestedCurrency}` : null,
+      note ? `Staff note: ${note}` : null,
+    ].filter(Boolean).join("\n"),
+    tags: [
+      `wishlist:${wishlist.id}`,
+      `wishlistName:${wishlist.name}`,
+      `wishlist-admin-submit`,
+      countryCode ? `country:${countryCode}` : null,
+      requestedCurrency ? `currencyRequested:${requestedCurrency}` : null,
+    ].filter(Boolean),
+    lineItems,
+  };
+
+  const attempt1Input = requestedCurrency
+    ? { ...baseInput, presentmentCurrencyCode: requestedCurrency }
+    : { ...baseInput };
+
+  const resp1 = await admin.graphql(gql, { variables: { input: attempt1Input } });
+  const respJson1: any = await resp1.json();
+  const gqlErrors1 = respJson1?.errors ?? [];
+  const userErrors1 = respJson1?.data?.draftOrderCreate?.userErrors ?? [];
+
+  if (!gqlErrors1.length && !userErrors1.length) {
+    const draftOrderId = respJson1?.data?.draftOrderCreate?.draftOrder?.id ?? null;
+
+    const submission = await prisma.wishlistSubmission.create({
+      data: {
+        shopId: shop.id,
+        wishlistId: wishlist.id,
+        customerId: wishlist.customerId,
+        status: "created",
+        draftOrderId,
+        note: note || null,
       },
-    },
-  });
+      select: { id: true, status: true, draftOrderId: true, createdAt: true },
+    });
 
-  const respJson: any = await resp.json();
-
-  if (respJson?.errors?.length) {
-    return json({ error: "GraphQL error", errors: respJson.errors }, 400);
-  }
-
-  const userErrors = respJson?.data?.draftOrderCreate?.userErrors ?? [];
-  if (userErrors.length) {
-    return json({ error: "Draft order create failed", userErrors }, 400);
-  }
-
-  const draftOrderId = respJson?.data?.draftOrderCreate?.draftOrder?.id ?? null;
-
-  const submission = await prisma.wishlistSubmission.create({
-    data: {
-      shopId: shop.id,
-      wishlistId: wishlist.id,
-      customerId: wishlist.customerId,
-      status: "created",
-      draftOrderId,
-      note: note || null,
-    },
-    select: { id: true, status: true, draftOrderId: true, createdAt: true },
-  });
-
-  return json(
-    {
+    return json({
       submission,
       countryCode,
-      presentmentCurrencyCode,
-      _submitVersion: "admin-draftOrderCreate-v2-currency-rules",
-    },
-    201
-  );
+      currency: { requested: requestedCurrency, used: requestedCurrency ?? null, fallbackUsed: false },
+      _submitVersion: "admin-draftOrderCreate-v3-currency-fallback",
+    }, 201);
+  }
+
+  // retry if currency error
+  if (requestedCurrency && looksLikeCurrencyError(gqlErrors1, userErrors1)) {
+    const attempt2Input =
+      fallbackCurrency
+        ? { ...baseInput, presentmentCurrencyCode: fallbackCurrency, tags: [...baseInput.tags, `currencyFallback:${fallbackCurrency}`] }
+        : { ...baseInput, tags: [...baseInput.tags, `currencyFallback:shop-default`] };
+
+    const resp2 = await admin.graphql(gql, { variables: { input: attempt2Input } });
+    const respJson2: any = await resp2.json();
+    const gqlErrors2 = respJson2?.errors ?? [];
+    const userErrors2 = respJson2?.data?.draftOrderCreate?.userErrors ?? [];
+
+    if (!gqlErrors2.length && !userErrors2.length) {
+      const draftOrderId = respJson2?.data?.draftOrderCreate?.draftOrder?.id ?? null;
+
+      const submission = await prisma.wishlistSubmission.create({
+        data: {
+          shopId: shop.id,
+          wishlistId: wishlist.id,
+          customerId: wishlist.customerId,
+          status: "created",
+          draftOrderId,
+          note: note || null,
+        },
+        select: { id: true, status: true, draftOrderId: true, createdAt: true },
+      });
+
+      return json({
+        submission,
+        countryCode,
+        currency: { requested: requestedCurrency, used: fallbackCurrency ?? null, fallbackUsed: true },
+        _submitVersion: "admin-draftOrderCreate-v3-currency-fallback",
+      }, 201);
+    }
+
+    return json({
+      error: "Draft order create failed (after currency fallback)",
+      countryCode,
+      currency: { requested: requestedCurrency, fallback: fallbackCurrency ?? null },
+      attempt: "fallback",
+      gqlErrors: gqlErrors2,
+      userErrors: userErrors2,
+      raw: respJson2,
+    }, 400);
+  }
+
+  return json({
+    error: "Draft order create failed",
+    countryCode,
+    currency: { requested: requestedCurrency, fallback: fallbackCurrency ?? null },
+    attempt: "primary",
+    gqlErrors: gqlErrors1,
+    userErrors: userErrors1,
+    raw: respJson1,
+  }, 400);
 }
