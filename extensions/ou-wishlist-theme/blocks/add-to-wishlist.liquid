@@ -8,9 +8,9 @@
   data-proxy-base="{{ block.settings.proxy_base }}"
   data-product-id="{{ product.id }}"
 >
-  <button type="button" class="ou-wishlist__btn">
-    {{ block.settings.button_label }}
-  </button>
+  <div type="button" class="ou-wishlist__btn button button--{{ block.settings.button_style }}">
+    <span>{{ block.settings.button_label }}</span>
+  </div>
 
   <div class="ou-wishlist__modal" hidden>
     <div class="ou-wishlist__backdrop"></div>
@@ -30,13 +30,12 @@
         <div class="ou-wishlist__row">
           <label>Create new</label>
           <input class="ou-wishlist__new" type="text" placeholder="New wishlist name" />
-          <button type="button" class="ou-wishlist__create">Create</button>
+          <div type="button" class="ou-wishlist__create button button--secondary">Create</div>
         </div>
 
         <div class="ou-wishlist__row">
-          <button type="button" class="ou-wishlist__add">
-            Add selected variant
-          </button>
+          <div type="button" class="ou-wishlist__add button button--primary">Add selected variant</div>
+
         </div>
 
         <div class="ou-wishlist__status" aria-live="polite"></div>
@@ -70,11 +69,25 @@
       "default": "Add to wishlist"
     },
     {
-      "type": "text",
-      "id": "proxy_base",
-      "label": "App proxy base path",
-      "default": "/apps/ou-wishlist"
+  "type": "select",
+  "id": "button_style",
+  "label": "Button style",
+  "default": "primary",
+  "options": [
+    {
+      "value": "primary",
+      "label": "Primary"
+    },
+    {
+      "value": "secondary",
+      "label": "Secondary"
+    },
+    {
+      "value": "tertiary",
+      "label": "Tertiary"
     }
+  ]
+}
   ]
 }
 {% endschema %}

@@ -1,9 +1,11 @@
-import prisma from "../../db.server";
-import { readBody } from "../../utils/api.server";
-import { resolveCustomerIdentity } from "../../utils/identity.server";
+// app/routes/api.lookup.tsx
+import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
+import { asString, readBody } from "../../utils/api.server"; // adjust path if needed
+import { resolveCustomerIdentity } from "../../utils/identity.server"; // adjust path if needed
+import prisma from "../../db.server"; // or "../../db.server" depending on your structure
 
-const API_VERSION = "2025-10";
 const EXT_ORIGIN = "https://extensions.shopifycdn.com";
+const ADMIN_API_VERSION = "2025-10";
 
 function allowOrigin(request: Request) {
   const origin = request.headers.get("Origin") || "";
@@ -22,150 +24,168 @@ function corsHeaders(request: Request) {
 function corsJson(request: Request, data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: {
-      "Content-Type": "application/json",
-      ...corsHeaders(request),
-    },
+    headers: { "Content-Type": "application/json", ...corsHeaders(request) },
   });
 }
 
 function corsNoContent(request: Request) {
-  return new Response(null, {
-    status: 204,
-    headers: corsHeaders(request),
+  return new Response(null, { status: 204, headers: corsHeaders(request) });
+}
+
+export async function loader({ request }: LoaderFunctionArgs) {
+  if (request.method === "OPTIONS") return corsNoContent(request);
+  return corsJson(request, { error: "Method not allowed" }, 405);
+}
+
+// Prefer OFFLINE token; fallback to newest.
+async function getShopAccessToken(shopDomain: string) {
+  const offline = await prisma.session.findFirst({
+    where: { shop: shopDomain, isOnline: false },
+    select: { accessToken: true },
   });
-}
+  if (offline?.accessToken) return offline.accessToken;
 
-function asGid(kind: "Product" | "ProductVariant", idOrGid: string) {
-  const s = String(idOrGid || "").trim();
-  if (!s) return null;
-  if (s.startsWith("gid://")) return s;
-  return `gid://shopify/${kind}/${s}`;
-}
-
-async function getAnyToken(shop: string) {
-  const sess = await prisma.session.findFirst({
-  where: { shop },
-  select: { accessToken: true },
-});
-return sess?.accessToken || null;
-}
-
-
-
-async function adminGraphql(shop: string, accessToken: string, query: string, variables: any) {
-  const res = await fetch(`https://${shop}/admin/api/${API_VERSION}/graphql.json`, {
-    method: "POST",
-    headers: {
-      "X-Shopify-Access-Token": accessToken,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({ query, variables }),
+  const any = await prisma.session.findFirst({
+    where: { shop: shopDomain },
+    select: { accessToken: true },
+    orderBy: { expires: "desc" },
   });
-  return res.json();
+  return any?.accessToken ?? null;
 }
 
-export async function action({ request }: { request: Request }) {
+function normalizeGid(id: string, kind: "Product" | "ProductVariant") {
+  if (!id) return null;
+  if (id.startsWith("gid://")) return id;
+  return `gid://shopify/${kind}/${id}`;
+}
+
+export async function action({ request }: ActionFunctionArgs) {
   if (request.method === "OPTIONS") return corsNoContent(request);
 
   try {
+    if (request.method !== "POST") return corsJson(request, { error: "Method not allowed" }, 405);
+
     const identity = await resolveCustomerIdentity(request);
 
-    if (request.method !== "POST") {
-      return corsJson(request, { error: "Method not allowed" }, 405);
+    const accessToken = await getShopAccessToken(identity.shop.shop);
+    if (!accessToken) {
+      return corsJson(
+        request,
+        { error: "Missing offline access token for shop" },
+        500
+      );
     }
 
     const body = await readBody(request);
 
-    const productIdsRaw = Array.isArray(body.productIds) ? body.productIds : [];
-    const variantIdsRaw = Array.isArray(body.variantIds) ? body.variantIds : [];
+    const countryCodeRaw = (asString((body as any).countryCode) || "").trim().toUpperCase();
+    const countryCode = countryCodeRaw && countryCodeRaw.length === 2 ? countryCodeRaw : null;
 
-    const productIds = productIdsRaw.map((x: any) => asGid("Product", String(x))).filter(Boolean);
-    const variantIds = variantIdsRaw.map((x: any) => asGid("ProductVariant", String(x))).filter(Boolean);
+    const productIdsIn = Array.isArray((body as any).productIds) ? (body as any).productIds : [];
+    const variantIdsIn = Array.isArray((body as any).variantIds) ? (body as any).variantIds : [];
 
-    const token = await getAnyToken(identity.shop.shop);
-    if (!token) return corsJson(request, { error: "Missing offline access token for shop" }, 500);
+    const productIds = productIdsIn
+      .map((id: string) => normalizeGid(String(id || ""), "Product"))
+      .filter(Boolean);
+
+    const variantIds = variantIdsIn
+      .map((id: string) => normalizeGid(String(id || ""), "ProductVariant"))
+      .filter(Boolean);
+
+    // nothing to do
+    if (!productIds.length && !variantIds.length) {
+      return corsJson(request, { productMap: {}, variantMap: {} }, 200);
+    }
 
     const gql = `#graphql
-      query Lookup($productIds: [ID!]!, $variantIds: [ID!]!) {
+      query Lookup($productIds: [ID!]!, $variantIds: [ID!]!, $country: CountryCode) {
         products: nodes(ids: $productIds) {
           ... on Product {
             id
             title
-            featuredImage { url altText }
+            handle
           }
         }
+
         variants: nodes(ids: $variantIds) {
           ... on ProductVariant {
             id
             title
-            price
-            image { url altText }
-            product { id title }
+            sku
+            product { id title handle }
+            price { amount currencyCode } # base fallback
+            contextualPricing(context: { country: $country }) {
+              price { amount currencyCode }
+              compareAtPrice { amount currencyCode }
+            }
           }
         }
       }
     `;
 
-    const out = await adminGraphql(identity.shop.shop, token, gql, {
-      productIds,
-      variantIds,
-    });
+    const resp = await fetch(
+      `https://${identity.shop.shop}/admin/api/${ADMIN_API_VERSION}/graphql.json`,
+      {
+        method: "POST",
+        headers: {
+          "X-Shopify-Access-Token": accessToken,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          query: gql,
+          variables: {
+            productIds,
+            variantIds,
+            country: countryCode, // can be null; Shopify will just ignore contextualPricing
+          },
+        }),
+      }
+    );
 
-    if (out?.errors?.length) {
-  return corsJson(
-    request,
-    {
-      error: "GraphQL error",
-      errors: out.errors,
-      shop: identity.shop.shop,
-      productIds,
-      variantIds,
-    },
-    400
-  );
-}
+    const json: any = await resp.json();
 
-
-    const products = (out?.data?.products || []).filter(Boolean);
-    const variants = (out?.data?.variants || []).filter(Boolean);
+    if (json?.errors?.length) {
+      return corsJson(
+        request,
+        {
+          error: "GraphQL error",
+          errors: json.errors,
+          shop: identity.shop.shop,
+          productIds,
+          variantIds,
+        },
+        400
+      );
+    }
 
     const productMap: Record<string, any> = {};
-    for (const p of products) productMap[p.id] = p;
-
     const variantMap: Record<string, any> = {};
-    for (const v of variants) variantMap[v.id] = v;
 
-    return corsJson(request, { productMap, variantMap }, 200);
+    const products = Array.isArray(json?.data?.products) ? json.data.products : [];
+    const variants = Array.isArray(json?.data?.variants) ? json.data.variants : [];
+
+    for (const p of products) {
+      if (p?.id) productMap[p.id] = p;
+    }
+
+    for (const v of variants) {
+      if (!v?.id) continue;
+
+      const contextualPrice = v?.contextualPricing?.price || null;
+      const basePrice = v?.price || null;
+
+      // ensure the extension always gets: variant.price = {amount,currencyCode}
+      const finalPrice = contextualPrice || basePrice || null;
+
+      variantMap[v.id] = {
+        ...v,
+        price: finalPrice, // override to contextual/base price object
+        compareAtPrice: v?.contextualPricing?.compareAtPrice || null,
+      };
+    }
+
+    return corsJson(request, { productMap, variantMap, countryCode }, 200);
   } catch (e: any) {
     return corsJson(request, { error: e?.message || "Unauthorized" }, 401);
   }
-}
-
-export async function loader({ request }: { request: Request }) {
-  if (request.method === "OPTIONS") return corsNoContent(request);
-
-  const url = new URL(request.url);
-  const shop = url.searchParams.get("shop") || "";
-  const sess = shop
-    ? await prisma.session.findMany({
-        where: { shop },
-        select: { id: true, shop: true, isOnline: true, scope: true, expires: true, accessToken: true },
-        take: 5,
-      })
-    : [];
-
-  return corsJson(request, {
-    ok: true,
-    shop,
-    sessionCount: sess.length,
-    sessions: sess.map((s) => ({
-      id: s.id,
-      shop: s.shop,
-      isOnline: s.isOnline,
-      scope: s.scope,
-      expires: s.expires,
-      hasAccessToken: !!s.accessToken,
-    })),
-  });
 }

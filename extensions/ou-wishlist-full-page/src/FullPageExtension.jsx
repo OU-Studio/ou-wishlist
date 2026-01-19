@@ -180,7 +180,7 @@ const [lookup, setLookup] = useState({
       if (productIds.length || variantIds.length) {
         const meta = await apiFetch("/api/lookup", {
           method: "POST",
-          body: { productIds, variantIds },
+          body: { productIds, variantIds, countryCode: countryCode || null, },
         });
         setLookup({
   productMap: meta?.productMap || {},
@@ -313,7 +313,7 @@ const [lookup, setLookup] = useState({
     try {
       const res = await apiFetch("/api/products/search", {
         method: "POST",
-        body: { q },
+        body: { q, countryCode: countryCode || null, },
       });
       setPickerResults(Array.isArray(res.products) ? res.products : []);
     } catch (e) {

@@ -1,9 +1,174 @@
-.ou-wishlist__modal[hidden]{display:none}
-.ou-wishlist__modal{position:fixed;inset:0;z-index:9999}
-.ou-wishlist__backdrop{position:absolute;inset:0;background:rgba(0,0,0,.35)}
-.ou-wishlist__panel{position:relative;max-width:520px;margin:10vh auto;background:#fff;border-radius:12px;padding:16px}
-.ou-wishlist__header{display:flex;justify-content:space-between;align-items:center;margin-bottom:12px}
-.ou-wishlist__row{display:flex;gap:8px;align-items:center;margin:10px 0}
-.ou-wishlist__row label{min-width:120px}
-.ou-wishlist__status{margin-top:10px;font-size:14px}
-.ou-wishlist__login a{text-decoration:underline}
+/* OU Wishlist modal — Shopify-ish, theme-friendly, minimal */
+
+/* Visibility */
+.ou-wishlist__modal[hidden] { display: none; }
+.ou-wishlist__modal {
+  position: fixed;
+  inset: 0;
+  z-index: 9999;
+  isolation: isolate;
+}
+
+/* Backdrop */
+.ou-wishlist__backdrop {
+  position: absolute;
+  inset: 0;
+  background: rgba(0,0,0,.45);
+}
+
+/* Panel (try to inherit theme surfaces + radius if present) */
+.ou-wishlist__panel {
+  position: relative;
+  width: min(560px, calc(100% - 32px));
+  margin: 10vh auto;
+  background: var(--color-background, #fff);
+  color: var(--color-foreground, #121212);
+  border-radius: var(--popup-border-radius, var(--border-radius, 12px));
+  box-shadow: 0 18px 60px rgba(0,0,0,.22);
+  border: 1px solid rgba(0,0,0,.08);
+  padding: 18px;
+}
+
+/* Header */
+.ou-wishlist__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid rgba(0,0,0,.08);
+  margin-bottom: 14px;
+}
+.ou-wishlist__header strong {
+  font-size: 16px;
+  line-height: 1.2;
+}
+
+/* Close button (minimal, theme-safe) */
+.ou-wishlist__close {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  width: 36px;
+  height: 36px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  font-size: 22px;
+  line-height: 1;
+  cursor: pointer;
+}
+.ou-wishlist__close:hover { background: rgba(0,0,0,.06); }
+.ou-wishlist__close:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+
+/* Body layout */
+.ou-wishlist__body {
+  display: grid;
+  gap: 12px;
+}
+
+/* Rows */
+.ou-wishlist__row {
+  display: grid;
+  gap: 8px;
+}
+@media (min-width: 520px) {
+  .ou-wishlist__row {
+    grid-template-columns: 150px 1fr auto;
+    align-items: center;
+  }
+  .ou-wishlist__row label { margin-top: 2px; }
+}
+
+/* Labels (inherit typography where possible) */
+.ou-wishlist__row label {
+  font-size: 13px;
+  opacity: .85;
+}
+
+/* Inputs/selects — attempt to use theme field styling if available */
+.ou-wishlist__select,
+.ou-wishlist__new {
+  width: 100%;
+  min-height: 44px;
+  padding: 10px 12px;
+  border-radius: var(--inputs-radius, var(--border-radius, 10px));
+  border: 1px solid rgba(0,0,0,.18);
+  background: var(--color-background, #fff);
+  color: inherit;
+  font: inherit;
+}
+
+/* If theme uses Dawn-like .field/.select wrappers, don't fight it */
+.ou-wishlist__select:focus-visible,
+.ou-wishlist__new:focus-visible {
+  outline: 2px solid rgba(0,0,0,.55);
+  outline-offset: 2px;
+}
+
+/* Buttons:
+   - rely on theme's `.button` + modifiers as much as possible
+   - only add spacing/width helpers
+*/
+.ou-wishlist__btn,
+.ou-wishlist__create,
+.ou-wishlist__add {
+  /* If the theme styles `.button`, it will win.
+     If not, fall back to a minimal baseline. */
+}
+
+.ou-wishlist__create.button,
+.ou-wishlist__add.button {
+  white-space: nowrap;
+}
+
+/* Make the primary action full-width on mobile */
+.ou-wishlist__row .ou-wishlist__add {
+  width: 100%;
+}
+@media (min-width: 520px) {
+  .ou-wishlist__row .ou-wishlist__add {
+    grid-column: 2 / 4;
+    width: fit-content;
+    justify-self: end;
+  }
+}
+
+/* Create row alignment */
+@media (min-width: 520px) {
+  .ou-wishlist__row:has(.ou-wishlist__create) .ou-wishlist__new { grid-column: 2 / 3; }
+  .ou-wishlist__row:has(.ou-wishlist__create) .ou-wishlist__create { grid-column: 3 / 4; }
+}
+
+/* Status / helper text */
+.ou-wishlist__status {
+  font-size: 13px;
+  line-height: 1.4;
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(0,0,0,.04);
+  border: 1px solid rgba(0,0,0,.06);
+}
+.ou-wishlist__status:empty { display: none; }
+
+/* Login prompt */
+.ou-wishlist__login {
+  padding: 10px 12px;
+  border-radius: 10px;
+  background: rgba(0,0,0,.04);
+  border: 1px solid rgba(0,0,0,.06);
+  font-size: 13px;
+}
+.ou-wishlist__login a { text-decoration: underline; }
+
+/* Motion + accessibility */
+@media (prefers-reduced-motion: no-preference) {
+  .ou-wishlist__backdrop { animation: ouFadeIn .16s ease-out; }
+  .ou-wishlist__panel { animation: ouPopIn .18s ease-out; }
+}
+@keyframes ouFadeIn { from { opacity: 0; } to { opacity: 1; } }
+@keyframes ouPopIn { from { opacity: 0; transform: translateY(8px) scale(.98); } to { opacity: 1; transform: none; } }
