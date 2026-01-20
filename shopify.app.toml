@@ -22,4 +22,4 @@ redirect_urls = [
 [app_proxy]
 url = "https://ou-wishlist-production.up.railway.app"
 subpath = "quote"
-prefix = "apps"
+prefix = "apps"  
