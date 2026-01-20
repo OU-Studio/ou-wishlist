@@ -2,7 +2,7 @@
 
 client_id = "095f203a496bc2f199f975c56c98de5b"
 name = "Quote"
-application_url = "https://ou-wishlist-production.up.railway.app"
+application_url = "https://studio-ore-quote.up.railway.app"
 embedded = true
 
 [webhooks]
@@ -15,11 +15,9 @@ optional_scopes = [ ]
 use_legacy_install_flow = false
 
 [auth]
-redirect_urls = [
-  "https://ou-wishlist-production.up.railway.app/auth/callback"
-]
+redirect_urls = [ "https://studio-ore-quote.up.railway.app/auth/callback" ]
 
 [app_proxy]
-url = "https://ou-wishlist-production.up.railway.app"
+url = "https://studio-ore-quote.up.railway.app"
 subpath = "quote"
-prefix = "apps"  
+prefix = "apps"
