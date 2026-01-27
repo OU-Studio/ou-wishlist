@@ -99,9 +99,36 @@ export async function action({
     }
   `;
 
+  async function getCustomerDefaultAddress(admin: any, customerGid: string) {
+  const q = `#graphql
+    query GetCustomerDefaultAddress($id: ID!) {
+      customer(id: $id) {
+        defaultAddress {
+          firstName
+          lastName
+          company
+          address1
+          address2
+          city
+          provinceCode
+          countryCodeV2
+          zip
+          phone
+        }
+      }
+    }
+  `;
+
+  const r = await admin.graphql(q, { variables: { id: customerGid } });
+  const j: any = await r.json();
+  return j?.data?.customer?.defaultAddress ?? null;
+}
+
+
   const baseInput: any = {
     customerId: customerGid,
   purchasingEntity: { customerId: customerGid },
+  useCustomerDefaultAddress: true,
     note: [
       `Wishlist: ${wishlist.id} (${wishlist.name})`,
       countryCode ? `Country: ${countryCode}` : null,
