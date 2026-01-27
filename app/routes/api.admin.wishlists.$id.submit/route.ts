@@ -101,7 +101,7 @@ export async function action({
 
   const baseInput: any = {
     customerId: customerGid,
-  useCustomerDefaultAddress: true,
+  purchasingEntity: { customerId: customerGid },
     note: [
       `Wishlist: ${wishlist.id} (${wishlist.name})`,
       countryCode ? `Country: ${countryCode}` : null,
