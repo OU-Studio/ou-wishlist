@@ -146,7 +146,6 @@ const customerNode = addrJson?.data?.customer;
 
 // Prefer defaultAddress, fallback to first saved address
 const bestAddress =
-  customerNode?.defaultAddress ??
   customerNode?.addressesV2?.nodes?.[0] ??
   null;
 
@@ -178,7 +177,6 @@ const mailingAddress = bestAddress
 
 
   const baseInput: any = {
-    useCustomerDefaultAddress: true,
     purchasingEntity: { customerId: customerGid },
     ...(mailingAddress
   ? { shippingAddress: mailingAddress, billingAddress: mailingAddress }
