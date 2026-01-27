@@ -1,6 +1,6 @@
 (function () {
   function init(root) {
-    const proxyBase = root.getAttribute("data-proxy-base") || "/apps/ou-wishlist";
+    const proxyBase = root.getAttribute("data-proxy-base") || "/apps/quote";
     const productId = root.getAttribute("data-product-id");
 
     const btn = root.querySelector(".ou-wishlist__btn");
