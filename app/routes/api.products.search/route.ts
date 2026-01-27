@@ -3,7 +3,7 @@ import prisma from "../../db.server";
 import { readBody, asString } from "../../utils/api.server";
 
 const EXT_ORIGIN = "https://extensions.shopifycdn.com";
-const API_VERSION = "2025-10";
+const API_VERSION = "2026-01";
 
 function allowOrigin(request: Request) {
   const origin = request.headers.get("Origin") || "";
