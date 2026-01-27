@@ -99,12 +99,90 @@ export async function action({
     }
   `;
 
- 
+
+  // [here] Fetch customer address (defaultAddress first, else first address in addressesV2)
+// Paste this ABOVE your `baseInput` construction.
+
+const addrQuery = `#graphql
+  query CustomerAddresses($id: ID!) {
+    customer(id: $id) {
+      defaultAddress {
+        firstName
+        lastName
+        company
+        address1
+        address2
+        city
+        provinceCode
+        zip
+        countryCodeV2
+        phone
+      }
+      addressesV2(first: 1) {
+        nodes {
+          firstName
+          lastName
+          company
+          address1
+          address2
+          city
+          provinceCode
+          zip
+          countryCodeV2
+          phone
+        }
+      }
+    }
+  }
+`;
+
+const addrResp = await admin.graphql(addrQuery, {
+  variables: { id: customerGid },
+});
+
+const addrJson: any = await addrResp.json();
+
+const customerNode = addrJson?.data?.customer;
+
+// Prefer defaultAddress, fallback to first saved address
+const bestAddress =
+  customerNode?.defaultAddress ??
+  customerNode?.addressesV2?.nodes?.[0] ??
+  null;
+
+// Map to MailingAddressInput for DraftOrderInput
+const mailingAddress = bestAddress
+  ? {
+      firstName: bestAddress.firstName ?? undefined,
+      lastName: bestAddress.lastName ?? undefined,
+      company: bestAddress.company ?? undefined,
+      address1: bestAddress.address1 ?? undefined,
+      address2: bestAddress.address2 ?? undefined,
+      city: bestAddress.city ?? undefined,
+      provinceCode: bestAddress.provinceCode ?? undefined,
+      zip: bestAddress.zip ?? undefined,
+
+      // DraftOrder expects `countryCode`, customer address returns `countryCodeV2`
+      countryCode: bestAddress.countryCodeV2 ?? undefined,
+
+      phone: bestAddress.phone ?? undefined,
+    }
+  : null;
+
+// If you want to require an address, uncomment:
+// if (!mailingAddress) return json({ error: "Customer has no saved address" }, 400);
+
+
+
+
 
 
   const baseInput: any = {
-  useCustomerDefaultAddress: true,
-  purchasingEntity: { customerId: customerGid },
+    useCustomerDefaultAddress: true,
+    purchasingEntity: { customerId: customerGid },
+    ...(mailingAddress
+  ? { shippingAddress: mailingAddress, billingAddress: mailingAddress }
+  : {}),
     lineItems,
     note: [
       `Wishlist: ${wishlist.id} (${wishlist.name})`,
