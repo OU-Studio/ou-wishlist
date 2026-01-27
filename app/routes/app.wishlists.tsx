@@ -202,7 +202,7 @@ export default function WishlistsAdminPage() {
   return (
     <s-page>
       <s-section>
-        <s-heading>Wishlists</s-heading>
+        <s-heading>Wishlists  v3</s-heading>
 
         <Form method="get">
           <s-stack direction="block" gap="base">
