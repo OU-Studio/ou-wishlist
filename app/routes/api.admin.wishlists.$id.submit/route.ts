@@ -179,15 +179,8 @@ const marketCC = toMarketCountryCode(countryCode);
 
   const baseInput: any = {
     customerId: customerGid,
-  purchasingEntity: { customerId: customerGid },
   useCustomerDefaultAddress: true,
-  ...(marketCC ? { marketRegionCountryCode: marketCC } : {}),
-  ...(mailingAddress
-    ? {
-        shippingAddress: mailingAddress,
-        billingAddress: mailingAddress,
-      }
-    : {}),
+  purchasingEntity: { customerId: customerGid },
   billingAddressMatchesShippingAddress: true,
     note: [
       `Wishlist: ${wishlist.id} (${wishlist.name})`,
