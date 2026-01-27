@@ -1,16 +1,23 @@
-api_version = "2025-10"
+# Learn more about configuring your Customer account UI extension:
+# https://shopify.dev/api/customer-account-ui-extensions/unstable/configuration
+
+# The version of APIs your extension will receive. Learn more:
+# https://shopify.dev/docs/api/usage/versioning
+api_version = "2026-01"
 
 [[extensions]]
-name = "OU Wishlist"
-uid = "d48a4f0d-8afe-0e82-fd24-a7183b6f53df05754e26"
-type = "ui_extension"
+name = "OU Wishlist Full Page"
 handle = "ou-wishlist-full-page"
+type = "ui_extension"
+uid = "33fbb164-02fa-44a3-eba5-49f61b8acf6ba40a88f7"
+
+# Controls where in Shopify your extension will be injected,
+# and the file that contains your extension’s source code. Learn more:
+# https://shopify.dev/docs/api/customer-account-ui-extensions/unstable/extension-targets-overview
 
 [[extensions.targeting]]
-target = "customer-account.page.render"
-module = "./src/FullPageExtension.jsx"
-
-
+module = "./src/OrderStatusBlock.jsx"
+target = "customer-account.order-status.block.render"
 
 [extensions.capabilities]
 # Gives your extension access to directly query Shopify’s storefront API.
@@ -20,4 +27,4 @@ api_access = true
 # Gives your extension access to make external network calls, using the
 # JavaScript `fetch()` API. Learn more:
 # https://shopify.dev/docs/api/customer-account-ui-extensions/unstable/configuration#network-access
-network_access = true
+# network_access = true

@@ -1,0 +1,23 @@
+api_version = "2025-10"
+
+[[extensions]]
+name = "OU Wishlist"
+uid = "d48a4f0d-8afe-0e82-fd24-a7183b6f53df05754e26"
+type = "ui_extension"
+handle = "ou-wishlist-full-page"
+
+[[extensions.targeting]]
+target = "customer-account.page.render"
+module = "./src/FullPageExtension.jsx"
+
+
+
+[extensions.capabilities]
+# Gives your extension access to directly query Shopify’s storefront API.
+# https://shopify.dev/docs/api/customer-account-ui-extensions/unstable/configuration#api-access
+api_access = true
+
+# Gives your extension access to make external network calls, using the
+# JavaScript `fetch()` API. Learn more:
+# https://shopify.dev/docs/api/customer-account-ui-extensions/unstable/configuration#network-access
+network_access = true

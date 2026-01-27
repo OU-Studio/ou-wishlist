@@ -2,7 +2,7 @@ import "@shopify/ui-extensions/preact";
 import { render } from "preact";
 import { useEffect, useMemo, useState } from "preact/hooks";
 
-const API_BASE = "https://ou-wishlist-production.up.railway.app";
+const API_BASE = "https://studio-ore-quote.up.railway.app";
 
 export default async () => {
   render(<Extension />, document.body);
