@@ -3,7 +3,7 @@ import { readBody, asString } from "../../utils/api.server";
 import { resolveCustomerIdentity } from "../../utils/identity.server";
 
 const EXT_ORIGIN = "https://extensions.shopifycdn.com";
-const ADMIN_API_VERSION = "2026-01";
+const ADMIN_API_VERSION = "2025-10";
 
 /* -------------------- CORS -------------------- */
 

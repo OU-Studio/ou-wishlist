@@ -5,7 +5,7 @@ import { resolveCustomerIdentity } from "../../utils/identity.server"; // adjust
 import prisma from "../../db.server"; // or "../../db.server" depending on your structure
 
 const EXT_ORIGIN = "https://extensions.shopifycdn.com";
-const ADMIN_API_VERSION = "2026-01";
+const ADMIN_API_VERSION = "2025-10";
 
 function allowOrigin(request: Request) {
   const origin = request.headers.get("Origin") || "";
