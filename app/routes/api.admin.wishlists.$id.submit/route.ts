@@ -160,15 +160,27 @@ const mailingAddress = bestAddress
 // if (!mailingAddress) return json({ error: "Customer has no saved address" }, 400);
 
 
+const mailingAddress2 = {
+  firstName: "Test",
+  lastName: "Customer",
+  address1: "123 Peter Street",
+  address2: undefined,
+  city: "Cardiff",
+  province: "Wales",          // optional
+  provinceCode: "WLS",        // optional; UK provinces are not required
+  zip: "CF1 2FR",
+  countryCode: "GB",          // IMPORTANT: ISO-3166-1 alpha-2
+  phone: "01234123456",
+};
+
 
 
 
 
   const baseInput: any = {
     purchasingEntity: { customerId: customerGid },
-    ...(mailingAddress
-  ? { shippingAddress: mailingAddress, billingAddress: mailingAddress }
-  : {}),
+  shippingAddress: mailingAddress2,
+  billingAddress: mailingAddress2,
     lineItems,
     note: [
       `Wishlist: ${wishlist.id} (${wishlist.name})`,
