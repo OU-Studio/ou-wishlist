@@ -103,8 +103,9 @@ export async function action({
 
 
   const baseInput: any = {
-  purchasingEntity: { customerId: customerGid },
   useCustomerDefaultAddress: true,
+  purchasingEntity: { customerId: customerGid },
+    lineItems,
     note: [
       `Wishlist: ${wishlist.id} (${wishlist.name})`,
       countryCode ? `Country: ${countryCode}` : null,
@@ -117,8 +118,7 @@ export async function action({
       `wishlist-admin-submit`,
       countryCode ? `country:${countryCode}` : null,
       requestedCurrency ? `currencyRequested:${requestedCurrency}` : null,
-    ].filter(Boolean),
-    lineItems,
+    ].filter(Boolean)
   };
 
   const attempt1Input = requestedCurrency
