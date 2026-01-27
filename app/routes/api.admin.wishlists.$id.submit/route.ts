@@ -99,87 +99,13 @@ export async function action({
     }
   `;
 
-  async function getCustomerDefaultAddress(admin: any, customerGid: string) {
-  const q = `#graphql
-    query GetCustomerDefaultAddress($id: ID!) {
-      customer(id: $id) {
-        defaultAddress {
-          firstName
-          lastName
-          company
-          address1
-          address2
-          city
-          provinceCode
-          countryCodeV2
-          zip
-          phone
-        }
-      }
-    }
-  `;
-
-  const r = await admin.graphql(q, { variables: { id: customerGid } });
-  const j: any = await r.json();
-  return j?.data?.customer?.defaultAddress ?? null;
-}
-
-// [here] Fetch default address and use it for shipping + billing
-const addrQuery = `#graphql
-  query CustomerDefaultAddress($id: ID!) {
-    customer(id: $id) {
-      defaultAddress {
-        firstName
-        lastName
-        company
-        address1
-        address2
-        city
-        provinceCode
-        zip
-        countryCodeV2
-        phone
-      }
-    }
-  }
-`;
-
-const addrResp = await admin.graphql(addrQuery, { variables: { id: customerGid } });
-const addrJson: any = await addrResp.json();
-const defaultAddress = addrJson?.data?.customer?.defaultAddress ?? null;
-
-// Map to MailingAddressInput shape DraftOrderInput expects
-const mailingAddress =
-  defaultAddress
-    ? {
-        firstName: defaultAddress.firstName ?? undefined,
-        lastName: defaultAddress.lastName ?? undefined,
-        company: defaultAddress.company ?? undefined,
-        address1: defaultAddress.address1 ?? undefined,
-        address2: defaultAddress.address2 ?? undefined,
-        city: defaultAddress.city ?? undefined,
-        provinceCode: defaultAddress.provinceCode ?? undefined,
-        zip: defaultAddress.zip ?? undefined,
-        countryCode: defaultAddress.countryCodeV2 ?? undefined,
-        phone: defaultAddress.phone ?? undefined,
-      }
-    : null;
-
-
 
 
 
   const baseInput: any = {
     customerId: customerGid,
-  purchasingEntity: { customerId: customerGid },
-  useCustomerDefaultAddress: true,
-  ...(mailingAddress
-    ? {
-        shippingAddress: mailingAddress,
-        billingAddress: mailingAddress,
-      }
-    : {}),
-  billingAddressMatchesShippingAddress: true,
+    purchasingEntity: { customerId: customerGid },
+    useCustomerDefaultAddress: true,
     note: [
       `Wishlist: ${wishlist.id} (${wishlist.name})`,
       countryCode ? `Country: ${countryCode}` : null,
