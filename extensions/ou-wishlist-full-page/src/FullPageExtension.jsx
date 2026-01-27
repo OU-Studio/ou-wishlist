@@ -319,6 +319,53 @@ function formatMoney(price) {
   return `${symbol}${amountStr}`;
 }
 
+function firstDefined(...vals) {
+  for (const v of vals) if (v) return v;
+  return null;
+}
+
+// Try common shapes from Storefront/Admin lookups
+function getImageUrl(v, p) {
+  // variant image (Storefront API style)
+  const v1 = v?.image?.url;
+  const v2 = v?.image?.src; // sometimes
+  const v3 = v?.imageUrl;
+
+  // product featured image (Storefront API style)
+  const p1 = p?.featuredImage?.url;
+  const p2 = p?.featuredImage?.src;
+  const p3 = p?.image?.url;
+  const p4 = p?.image?.src;
+  const p5 = p?.imageUrl;
+
+  // sometimes product.images.nodes[0].url
+  const p6 = p?.images?.nodes?.[0]?.url;
+
+  return firstDefined(v1, v2, v3, p1, p2, p3, p4, p5, p6);
+}
+
+function getProductUrl(v, p) {
+  // If your lookup includes onlineStoreUrl or handle
+  return (
+    v?.product?.onlineStoreUrl ||
+    p?.onlineStoreUrl ||
+    v?.product?.url ||
+    p?.url ||
+    null
+  );
+}
+
+function getAltText(v, p, title) {
+  return (
+    v?.image?.altText ||
+    p?.featuredImage?.altText ||
+    p?.image?.altText ||
+    title ||
+    "Product image"
+  );
+}
+
+
 
   async function removeItem(itemId) {
     if (!activeId) return;
@@ -505,39 +552,64 @@ function formatMoney(price) {
     const priceText = formatMoney(v?.price);
 
                   return (
-                    <s-list-item key={it.id}>
-                      <s-stack direction="block" gap="base">
-                        <s-stack direction="block" gap="base">
-                          <s-text>{title}</s-text>
-                          {variantTitle && <s-text>{variantTitle}</s-text>}
-                        </s-stack>
+  <s-list-item key={it.id}>
+    <s-stack direction="block" gap="base">
+      {/* Row: image + text */}
+      <s-stack direction="inline" gap="base">
+        {(() => {
+          const imgUrl = getImageUrl(v, p);
+          const linkUrl = getProductUrl(v, p);
+          const alt = getAltText(v, p, title);
 
-                        <s-text>Qty: {it.quantity}</s-text>
+          const thumb = imgUrl ? (
+            <s-image src={imgUrl} alt={alt} />
 
-                        <s-text>Price: {priceText}</s-text>
+          ) : (
+            <s-box>
+              <s-text>No image</s-text>
+            </s-box>
+          );
 
-                        <s-stack direction="inline" gap="base">
-                          <s-button
-                            onClick={() => updateItemQty(it.id, (it.quantity || 1) - 1)}
-                            variant="secondary"
-                          >
-                            −
-                          </s-button>
+          // If we have a URL, wrap it with a link; otherwise just show the image
+          return linkUrl ? (
+            <s-link href={linkUrl}>{thumb}</s-link>
+          ) : (
+            thumb
+          );
+        })()}
 
-                          <s-button
-                            onClick={() => updateItemQty(it.id, (it.quantity || 1) + 1)}
-                            variant="secondary"
-                          >
-                            +
-                          </s-button>
+        <s-stack direction="block" gap="base">
+          <s-text>{title}</s-text>
+          {variantTitle && <s-text>{variantTitle}</s-text>}
+          {priceText ? <s-text>Price: {priceText}</s-text> : null}
+          <s-text>Qty: {it.quantity}</s-text>
+        </s-stack>
+      </s-stack>
 
-                          <s-button onClick={() => removeItem(it.id)} variant="secondary">
-                            Remove
-                          </s-button>
-                        </s-stack>
-                      </s-stack>
-                    </s-list-item>
-                  );
+      {/* Controls */}
+      <s-stack direction="inline" gap="base">
+        <s-button
+          onClick={() => updateItemQty(it.id, (it.quantity || 1) - 1)}
+          variant="secondary"
+        >
+          −
+        </s-button>
+
+        <s-button
+          onClick={() => updateItemQty(it.id, (it.quantity || 1) + 1)}
+          variant="secondary"
+        >
+          +
+        </s-button>
+
+        <s-button onClick={() => removeItem(it.id)} variant="secondary">
+          Remove
+        </s-button>
+      </s-stack>
+    </s-stack>
+  </s-list-item>
+);
+
                 })}
               </s-unordered-list>
             )}
