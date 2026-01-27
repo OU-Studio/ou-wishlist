@@ -184,14 +184,89 @@ export async function action({
     /* ---------- GraphQL (NO DraftOrder read) ---------- */
 
     const gql = `#graphql
-      mutation CreateDraftOrder($input: DraftOrderInput!) {
-        draftOrderCreate(input: $input) {
-          userErrors { field message }
-        }
+  mutation CreateDraftOrder($input: DraftOrderInput!) {
+    draftOrderCreate(input: $input) {
+      draftOrder {
+        id
+        name
+        presentmentCurrencyCode
+        marketRegionCountryCode
+        shippingAddress { address1 city zip countryCodeV2 }
+        billingAddress  { address1 city zip countryCodeV2 }
       }
-    `;
+      userErrors { field message }
+    }
+  }
+`;
 
     const customerGid = `gid://shopify/Customer/${identity.customer.customerId}`;
+
+    // 1) Fetch best address (defaultAddress first, else addressesV2[0])
+const addrQuery = `#graphql
+  query CustomerAddresses($id: ID!) {
+    customer(id: $id) {
+      defaultAddress {
+        firstName lastName company
+        address1 address2 city provinceCode zip
+        countryCodeV2 phone
+      }
+      addressesV2(first: 1) {
+        nodes {
+          firstName lastName company
+          address1 address2 city provinceCode zip
+          countryCodeV2 phone
+        }
+      }
+    }
+  }
+`;
+
+const addrRes = await fetch(
+  `https://${identity.shop.shop}/admin/api/${ADMIN_API_VERSION}/graphql.json`,
+  {
+    method: "POST",
+    headers: {
+      "X-Shopify-Access-Token": accessToken,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      query: addrQuery,
+      variables: { id: customerGid },
+    }),
+  }
+);
+
+const addrJson: any = await addrRes.json();
+const customerNode = addrJson?.data?.customer;
+
+const bestAddress =
+  customerNode?.defaultAddress ??
+  customerNode?.addressesV2?.nodes?.[0] ??
+  null;
+
+// Map to MailingAddressInput (DraftOrderInput expects countryCode, not countryCodeV2)
+const mailingAddress = bestAddress
+  ? {
+      firstName: bestAddress.firstName ?? undefined,
+      lastName: bestAddress.lastName ?? undefined,
+      company: bestAddress.company ?? undefined,
+      address1: bestAddress.address1 ?? undefined,
+      address2: bestAddress.address2 ?? undefined,
+      city: bestAddress.city ?? undefined,
+      provinceCode: bestAddress.provinceCode ?? undefined,
+      zip: bestAddress.zip ?? undefined,
+      countryCode: bestAddress.countryCodeV2 ?? undefined,
+      phone: bestAddress.phone ?? undefined,
+    }
+  : null;
+
+// 2) Normalize market country (UK -> GB)
+const marketCC =
+  countryCode
+    ? String(countryCode).trim().toUpperCase() === "UK"
+      ? "GB"
+      : String(countryCode).trim().toUpperCase()
+    : null;
 
     const res = await fetch(
       `https://${identity.shop.shop}/admin/api/${ADMIN_API_VERSION}/graphql.json`,
@@ -205,7 +280,18 @@ export async function action({
           query: gql,
           variables: {
             input: {
-              customerId: customerGid,
+              purchasingEntity: { customerId: customerGid },
+
+  ...(mailingAddress
+    ? {
+        shippingAddress: mailingAddress,
+        billingAddress: mailingAddress,
+      }
+    : {
+        useCustomerDefaultAddress: true,
+      }),
+
+  ...(marketCC && marketCC.length === 2 ? { marketRegionCountryCode: marketCC } : {}),
               note: draftNote,
               tags: ["wishlist-submission"],
               lineItems,
@@ -221,42 +307,33 @@ export async function action({
     const json: any = await res.json();
 
     const userErrors = json?.data?.draftOrderCreate?.userErrors ?? [];
+const draftOrder = json?.data?.draftOrderCreate?.draftOrder ?? null;
 
-    if (userErrors.length) {
-      await prisma.wishlistSubmission.update({
-        where: { id: submission.id },
-        data: { status: "failed" },
-      });
+if (userErrors.length || !draftOrder?.id) {
+  await prisma.wishlistSubmission.update({
+    where: { id: submission.id },
+    data: { status: "failed" },
+  });
 
-      return corsJson(
-        request,
-        {
-          error: "Draft order create failed",
-          userErrors,
-        },
-        400
-      );
-    }
+  return corsJson(request, { error: "Draft order create failed", userErrors, raw: json }, 400);
+}
 
-    /* ---------- SUCCESS ---------- */
+// Persist immediately
+await prisma.wishlistSubmission.update({
+  where: { id: submission.id },
+  data: { status: "created", draftOrderId: draftOrder.id },
+});
 
-    await prisma.wishlistSubmission.update({
-      where: { id: submission.id },
-      data: { status: "created" },
-    });
+return corsJson(
+  request,
+  {
+    submission: { id: submission.id, status: "created", draftOrderId: draftOrder.id },
+    draftOrder, // lets you verify address+market in the frontend logs
+    _submitVersion: "draftOrderCreate-webhook-based-v2",
+  },
+  201
+);
 
-    return corsJson(
-      request,
-      {
-        submission: {
-          id: submission.id,
-          status: "created",
-        },
-        note: "Draft order created; ID will be attached via webhook",
-        _submitVersion: "draftOrderCreate-webhook-based",
-      },
-      201
-    );
   } catch (e: any) {
     return corsJson(
       request,
