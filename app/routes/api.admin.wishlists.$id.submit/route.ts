@@ -106,18 +106,6 @@ export async function action({
 const addrQuery = `#graphql
   query CustomerAddresses($id: ID!) {
     customer(id: $id) {
-      defaultAddress {
-        firstName
-        lastName
-        company
-        address1
-        address2
-        city
-        provinceCode
-        zip
-        countryCodeV2
-        phone
-      }
       addressesV2(first: 1) {
         nodes {
           firstName
