@@ -90,22 +90,39 @@ export async function action({
 
   const customerGid = `gid://shopify/Customer/${wishlist.customer.customerId}`;
 
-  const gql = `#graphql
-    mutation CreateDraftOrder($input: DraftOrderInput!) {
-      draftOrderCreate(input: $input) {
-        draftOrder { id name }
-        userErrors { field message }
+// Return the fields we need to verify in responses
+const gql = `#graphql
+  mutation CreateDraftOrder($input: DraftOrderInput!) {
+    draftOrderCreate(input: $input) {
+      draftOrder {
+        id
+        name
+        presentmentCurrencyCode
+        marketRegionCountryCode
+        shippingAddress { address1 city zip countryCodeV2 }
+        billingAddress  { address1 city zip countryCodeV2 }
       }
+      userErrors { field message }
     }
-  `;
+  }
+`;
 
-
-  // [here] Fetch customer address (defaultAddress first, else first address in addressesV2)
-// Paste this ABOVE your `baseInput` construction.
-
+// Fetch best customer address: defaultAddress first, else first addressesV2 node
 const addrQuery = `#graphql
   query CustomerAddresses($id: ID!) {
     customer(id: $id) {
+      defaultAddress {
+        firstName
+        lastName
+        company
+        address1
+        address2
+        city
+        provinceCode
+        zip
+        countryCodeV2
+        phone
+      }
       addressesV2(first: 1) {
         nodes {
           firstName
@@ -124,78 +141,74 @@ const addrQuery = `#graphql
   }
 `;
 
-const addrResp = await admin.graphql(addrQuery, {
-  variables: { id: customerGid },
-});
-
+const addrResp = await admin.graphql(addrQuery, { variables: { id: customerGid } });
 const addrJson: any = await addrResp.json();
 
 const customerNode = addrJson?.data?.customer;
-
-// Prefer defaultAddress, fallback to first saved address
 const bestAddress =
+  customerNode?.defaultAddress ??
   customerNode?.addressesV2?.nodes?.[0] ??
   null;
 
-// Map to MailingAddressInput for DraftOrderInput
+// Map to MailingAddressInput used by DraftOrderInput
 const mailingAddress = bestAddress
   ? {
-      firstName: bestAddress.firstName ?? '1',
-      lastName: bestAddress.lastName ?? '2',
-      company: bestAddress.company ?? '3',
-      address1: bestAddress.address1 ?? '4',
-      address2: bestAddress.address2 ?? '5',
-      city: bestAddress.city ?? '6',
-      provinceCode: bestAddress.provinceCode ?? '7',
-      zip: bestAddress.zip ?? 'np11 4ae',
-
-      // DraftOrder expects `countryCode`, customer address returns `countryCodeV2`
-      countryCode: bestAddress.countryCodeV2 ?? '9',
-
-      phone: bestAddress.phone ?? '07123123123',
+      firstName: bestAddress.firstName ?? undefined,
+      lastName: bestAddress.lastName ?? undefined,
+      company: bestAddress.company ?? undefined,
+      address1: bestAddress.address1 ?? undefined,
+      address2: bestAddress.address2 ?? undefined,
+      city: bestAddress.city ?? undefined,
+      provinceCode: bestAddress.provinceCode ?? undefined,
+      zip: bestAddress.zip ?? undefined,
+      countryCode: bestAddress.countryCodeV2 ?? undefined, // IMPORTANT mapping
+      phone: bestAddress.phone ?? undefined,
     }
   : null;
 
-// If you want to require an address, uncomment:
+// Optional hard fail if you require an address
 // if (!mailingAddress) return json({ error: "Customer has no saved address" }, 400);
 
+// Market: normalize UK -> GB and only set if valid
+const marketCC =
+  countryCode
+    ? String(countryCode).trim().toUpperCase() === "UK"
+      ? "GB"
+      : String(countryCode).trim().toUpperCase()
+    : null;
 
-const mailingAddress2 = {
-  firstName: "Test",
-  lastName: "Customer",
-  address1: "123 Peter Street",
-  address2: undefined,
-  city: "Cardiff",
-  province: "Wales",          // optional
-  provinceCode: "WLS",        // optional; UK provinces are not required
-  zip: "CF1 2FR",
-  countryCode: "GB",          // IMPORTANT: ISO-3166-1 alpha-2
-  phone: "01234123456",
+const baseInput: any = {
+  purchasingEntity: { customerId: customerGid },
+
+  // If we have an address, explicitly set both. Otherwise allow Shopify defaults.
+  ...(mailingAddress
+    ? { shippingAddress: mailingAddress, billingAddress: mailingAddress }
+    : { useCustomerDefaultAddress: true }),
+
+  ...(marketCC && marketCC.length === 2 ? { marketRegionCountryCode: marketCC } : {}),
+
+  lineItems,
+
+  note: [
+    `Wishlist: ${wishlist.id} (${wishlist.name})`,
+    countryCode ? `Country: ${countryCode}` : null,
+    requestedCurrency ? `Requested currency: ${requestedCurrency}` : null,
+    mailingAddress ? `Ship-to: ${mailingAddress.zip || ""} ${mailingAddress.countryCode || ""}` : "Ship-to: (none)",
+    note ? `Staff note: ${note}` : null,
+  ]
+    .filter(Boolean)
+    .join("\n"),
+
+  tags: [
+    `wishlist:${wishlist.id}`,
+    `wishlistName:${wishlist.name}`,
+    `wishlist-admin-submit`,
+    countryCode ? `country:${countryCode}` : null,
+    requestedCurrency ? `currencyRequested:${requestedCurrency}` : null,
+    marketCC ? `market:${marketCC}` : null,
+  ].filter(Boolean),
 };
 
-
-
-
-
-  const baseInput: any = {
-    purchasingEntity: { customerId: customerGid },
-  shippingAddress: mailingAddress2,
-  billingAddress: mailingAddress2,
-    lineItems,
-    note: [
-      `Wishlist: ${wishlist.id} (${wishlist.name})`,
-      countryCode ? `Country: ${countryCode}` : null,
-      requestedCurrency ? `Requested currency: ${requestedCurrency}` : null,
-      note ? `Staff note: ${note}` : null,
-    ].filter(Boolean).join("\n"),
-    tags: [
-      `wishlist:${wishlist.id}`,
-      `wishlistName:${wishlist.name}`,
-      `wishlist-admin-submit`,
-      countryCode ? `country:${countryCode}` : null,
-      requestedCurrency ? `currencyRequested:${requestedCurrency}` : null,
-    ].filter(Boolean)
-  };
 
   const attempt1Input = requestedCurrency
     ? { ...baseInput, presentmentCurrencyCode: requestedCurrency }
