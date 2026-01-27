@@ -140,19 +140,19 @@ const bestAddress =
 // Map to MailingAddressInput for DraftOrderInput
 const mailingAddress = bestAddress
   ? {
-      firstName: bestAddress.firstName ?? undefined,
-      lastName: bestAddress.lastName ?? undefined,
-      company: bestAddress.company ?? undefined,
-      address1: bestAddress.address1 ?? undefined,
-      address2: bestAddress.address2 ?? undefined,
-      city: bestAddress.city ?? undefined,
-      provinceCode: bestAddress.provinceCode ?? undefined,
-      zip: bestAddress.zip ?? undefined,
+      firstName: bestAddress.firstName ?? '1',
+      lastName: bestAddress.lastName ?? '2',
+      company: bestAddress.company ?? '3',
+      address1: bestAddress.address1 ?? '4',
+      address2: bestAddress.address2 ?? '5',
+      city: bestAddress.city ?? '6',
+      provinceCode: bestAddress.provinceCode ?? '7',
+      zip: bestAddress.zip ?? 'np11 4ae',
 
       // DraftOrder expects `countryCode`, customer address returns `countryCodeV2`
-      countryCode: bestAddress.countryCodeV2 ?? undefined,
+      countryCode: bestAddress.countryCodeV2 ?? '9',
 
-      phone: bestAddress.phone ?? undefined,
+      phone: bestAddress.phone ?? '07123123123',
     }
   : null;
 
