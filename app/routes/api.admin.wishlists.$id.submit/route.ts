@@ -166,14 +166,6 @@ const mailingAddress =
     : null;
 
 
-function toMarketCountryCode(countryCode: string | null) {
-  if (!countryCode) return null;
-  const cc = countryCode.trim().toUpperCase();
-  if (cc === "UK") return "GB"; // Shopify uses ISO-3166-1 alpha-2
-  return cc.length === 2 ? cc : null;
-}
-
-const marketCC = toMarketCountryCode(countryCode);
 
 
 
@@ -181,7 +173,13 @@ const marketCC = toMarketCountryCode(countryCode);
     customerId: customerGid,
   purchasingEntity: { customerId: customerGid },
   useCustomerDefaultAddress: true,
-  ...(marketCC ? { marketRegionCountryCode: marketCC } : {}),
+  ...(mailingAddress
+    ? {
+        shippingAddress: mailingAddress,
+        billingAddress: mailingAddress,
+      }
+    : {}),
+  billingAddressMatchesShippingAddress: true,
     note: [
       `Wishlist: ${wishlist.id} (${wishlist.name})`,
       countryCode ? `Country: ${countryCode}` : null,
