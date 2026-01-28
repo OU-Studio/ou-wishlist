@@ -325,24 +325,26 @@ function firstDefined(...vals) {
 }
 
 // Try common shapes from Storefront/Admin lookups
-function getImageUrl(v, p) {
-  // variant image (Storefront API style)
-  const v1 = v?.image?.url;
-  const v2 = v?.image?.src; // sometimes
-  const v3 = v?.imageUrl;
-
-  // product featured image (Storefront API style)
-  const p1 = p?.featuredImage?.url;
-  const p2 = p?.featuredImage?.src;
-  const p3 = p?.image?.url;
-  const p4 = p?.image?.src;
-  const p5 = p?.imageUrl;
-
-  // sometimes product.images.nodes[0].url
-  const p6 = p?.images?.nodes?.[0]?.url;
-
-  return firstDefined(v1, v2, v3, p1, p2, p3, p4, p5, p6);
+function getImageUrl(_v, p) {
+  return (
+    p?.featuredImage?.url ||
+    p?.featuredImage?.src ||
+    p?.image?.url ||
+    p?.image?.src ||
+    p?.images?.nodes?.[0]?.url ||
+    p?.images?.[0]?.url ||
+    p?.images?.[0]?.src ||
+    p?.media?.nodes?.[0]?.previewImage?.url ||
+    p?.media?.nodes?.[0]?.previewImage?.src ||
+    p?.featuredMedia?.previewImage?.url ||
+    p?.featuredMedia?.previewImage?.src ||
+    p?.primaryImage?.url ||
+    p?.primaryImage?.src ||
+    p?.imageUrl ||
+    null
+  );
 }
+
 
 function getProductUrl(v, p) {
   // If your lookup includes onlineStoreUrl or handle
@@ -541,6 +543,10 @@ function getAltText(v, p, title) {
 
                   const title = v?.product?.title || p?.title || `Product ${it.productId}`;
                   const variantTitle = v?.title && v.title !== "Default Title" ? v.title : null;
+
+                  console.log("LOOKUP SAMPLE (variant)", v);
+  console.log("LOOKUP SAMPLE (product)", p);
+
 
                   const price =
   v?.price?.amount
