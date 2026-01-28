@@ -106,6 +106,10 @@ export async function action({ request }: ActionFunctionArgs) {
         id
         title
         handle
+  featuredImage {
+    url
+    altText
+  }
       }
     }
 
