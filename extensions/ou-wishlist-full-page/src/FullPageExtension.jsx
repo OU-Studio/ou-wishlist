@@ -31,6 +31,7 @@ async function authHeaders() {
   };
 }
 
+
 function asText(v) {
   if (typeof v === "string") return v;
   if (v == null) return "";
@@ -96,11 +97,11 @@ function Extension() {
 
   /** @typedef {{ productMap: Record<string, any>, variantMap: Record<string, any> }} Lookup */
 
- /** @type {[Lookup, (v: Lookup) => void]} */
-const [lookup, setLookup] = useState({
-  productMap: {},
-  variantMap: {},
-});
+  /** @type {[Lookup, (v: Lookup) => void]} */
+  const [lookup, setLookup] = useState({
+    productMap: {},
+    variantMap: {},
+  });
 
   const baseParams = useMemo(() => {
     return { customerId: customerId || "" };
@@ -123,10 +124,10 @@ const [lookup, setLookup] = useState({
   }
 
   async function apiFetch(path, options = {}) {
-    const { method = "GET", body } = options;
+  const { method = "GET", body } = options;
+  const sd = await ensureShopDomain();
 
-    const sd = await ensureShopDomain();
-
+  async function doFetch() {
     const res = await fetch(buildUrl(path, { shop: sd }), {
       method,
       headers: await authHeaders(),
@@ -141,12 +142,34 @@ const [lookup, setLookup] = useState({
       json = { raw: text };
     }
 
-    if (!res.ok) {
-      throw new Error(json?.error || `Request failed (${res.status})`);
-    }
-
-    return json;
+    return { res, json };
   }
+
+  // attempt 1
+  let { res, json } = await doFetch();
+
+  // retry once if auth/session expired
+  const msg = String(json?.error || json?.errors || "").toLowerCase();
+  const shouldRetry =
+    res.status === 401 ||
+    res.status === 403 ||
+    msg.includes("invalid api key") ||
+    msg.includes("invalid access token") ||
+    msg.includes("unauthorized");
+
+  if (shouldRetry) {
+    // attempt 2 (new token is often issued implicitly)
+    ({ res, json } = await doFetch());
+  }
+
+  if (!res.ok) {
+    throw new Error(json?.error || `Request failed (${res.status})`);
+  }
+
+  return json;
+}
+
+
 
   async function loadWishlists() {
     try {
@@ -161,11 +184,12 @@ const [lookup, setLookup] = useState({
     }
   }
 
+
+
   async function loadWishlistDetail(id) {
     try {
       setLoadingDetail(true);
       setDetailError(null);
-      setSubmitResult(null);
 
       const json = await apiFetch(`/api/wishlists/${id}`);
       const wl = json.wishlist || json;
@@ -183,9 +207,9 @@ const [lookup, setLookup] = useState({
           body: { productIds, variantIds, countryCode: countryCode || null, },
         });
         setLookup({
-  productMap: meta?.productMap || {},
-  variantMap: meta?.variantMap || {},
-});
+          productMap: meta?.productMap || {},
+          variantMap: meta?.variantMap || {},
+        });
 
       } else {
         setLookup({ productMap: {}, variantMap: {} });
@@ -200,7 +224,7 @@ const [lookup, setLookup] = useState({
   async function createWishlist() {
     const trimmed = asText(newName).trim();
     if (!trimmed) {
-      setCreateError("Enter a wishlist name.");
+      setCreateError("Enter a name for this quotation.");
       return;
     }
     try {
@@ -282,90 +306,97 @@ const [lookup, setLookup] = useState({
       setDetailError(String(e?.message || e));
       try {
         await loadWishlistDetail(activeId);
-      } catch {}
+      } catch { }
     }
   }
 
   const CURRENCY_SYMBOL = {
-  GBP: "£",
-  EUR: "€",
-  USD: "$",
-  CAD: "$",
-  AUD: "$",
-  NZD: "$",
-  JPY: "¥",
-  CNY: "¥",
-  HKD: "$",
-  SGD: "$",
-  CHF: "CHF ",
-  SEK: "kr ",
-  NOK: "kr ",
-  DKK: "kr ",
-};
+    GBP: "£",
+    EUR: "€",
+    USD: "$",
+    CAD: "$",
+    AUD: "$",
+    NZD: "$",
+    JPY: "¥",
+    CNY: "¥",
+    HKD: "$",
+    SGD: "$",
+    CHF: "CHF ",
+    SEK: "kr ",
+    NOK: "kr ",
+    DKK: "kr ",
+  };
 
-function formatMoney(price) {
+  function formatMoney(price) {
   if (!price) return null;
 
-  // supports { amount, currencyCode } OR legacy "12.00"/12.00 + separate currency
   const amount = typeof price === "object" ? price.amount : String(price);
   const code = typeof price === "object" ? price.currencyCode : null;
 
   if (!amount) return null;
 
   const n = Number(amount);
-  const amountStr = Number.isFinite(n) ? n.toFixed(2) : String(amount);
+
+  // format with commas + 2dp
+  const amountStr = Number.isFinite(n)
+    ? n.toLocaleString("en-GB", {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2,
+      })
+    : String(amount);
 
   const symbol = code ? (CURRENCY_SYMBOL[code] ?? `${code} `) : "";
   return `${symbol}${amountStr}`;
 }
 
-function firstDefined(...vals) {
-  for (const v of vals) if (v) return v;
-  return null;
-}
 
-// Try common shapes from Storefront/Admin lookups
-function getImageUrl(_v, p) {
-  return (
-    p?.featuredImage?.url ||
-    p?.featuredImage?.src ||
-    p?.image?.url ||
-    p?.image?.src ||
-    p?.images?.nodes?.[0]?.url ||
-    p?.images?.[0]?.url ||
-    p?.images?.[0]?.src ||
-    p?.media?.nodes?.[0]?.previewImage?.url ||
-    p?.media?.nodes?.[0]?.previewImage?.src ||
-    p?.featuredMedia?.previewImage?.url ||
-    p?.featuredMedia?.previewImage?.src ||
-    p?.primaryImage?.url ||
-    p?.primaryImage?.src ||
-    p?.imageUrl ||
-    null
-  );
-}
+  function firstDefined(...vals) {
+    for (const v of vals) if (v) return v;
+    return null;
+  }
+
+  // Try common shapes from Storefront/Admin lookups
+  function getImageUrl(_v, p) {
+    return (
+      p?.featuredImage?.url ||
+      p?.featuredImage?.src ||
+      p?.image?.url ||
+      p?.image?.src ||
+      p?.images?.nodes?.[0]?.url ||
+      p?.images?.[0]?.url ||
+      p?.images?.[0]?.src ||
+      p?.media?.nodes?.[0]?.previewImage?.url ||
+      p?.media?.nodes?.[0]?.previewImage?.src ||
+      p?.featuredMedia?.previewImage?.url ||
+      p?.featuredMedia?.previewImage?.src ||
+      p?.primaryImage?.url ||
+      p?.primaryImage?.src ||
+      p?.imageUrl ||
+      null
+    );
+  }
 
 
-function getProductUrl(v, p) {
-  // If your lookup includes onlineStoreUrl or handle
-  return (
-    v?.product?.onlineStoreUrl ||
-    p?.onlineStoreUrl ||
-    v?.product?.url ||
-    p?.url ||
-    null
-  );
-}
+  function getProductUrl(v, p) {
+    // If your lookup includes onlineStoreUrl or handle
+    return (
+      v?.product?.onlineStoreUrl ||
+      p?.onlineStoreUrl ||
+      v?.product?.url ||
+      p?.url ||
+      null
+    );
+  }
 
-function getAltText(v, p, title) {
-  return (
-    v?.image?.altText ||
-    p?.featuredImage?.altText ||
-    p?.image?.altText ||
-    title ||
-    "Product image"
-  );
-}
+  function getAltText(v, p, title) {
+    return (
+      v?.image?.altText ||
+      p?.featuredImage?.altText ||
+      p?.image?.altText ||
+      title ||
+      "Product image"
+    );
+  }
 
 
 
@@ -386,7 +417,7 @@ function getAltText(v, p, title) {
       setDetailError(String(e?.message || e));
       try {
         await loadWishlistDetail(activeId);
-      } catch {}
+      } catch { }
     }
   }
 
@@ -476,15 +507,22 @@ function getAltText(v, p, title) {
 
     const detailSections = [
       {
+        id: "detail-subheader",
+        show: true,
+        node: (
+          <s-button onClick={goBack} variant="secondary">
+                Back
+              </s-button>
+        ),
+      },
+      {
         id: "detail-header",
         show: true,
         node: (
           <s-section>
-            <s-stack direction="inline" gap="base">
-              <s-button onClick={goBack} variant="secondary">
-                Back
-              </s-button>
-              <s-heading>{wl?.name || "Wishlist"}</s-heading>
+            <s-stack direction="block" gap="base">
+              
+              <s-heading>Quotation: {wl?.name || "Quotations"}</s-heading>
             </s-stack>
 
             {loadingDetail && <s-text>Loading…</s-text>}
@@ -497,10 +535,11 @@ function getAltText(v, p, title) {
         show: !!wl,
         node: (
           <s-section>
+            <s-stack direction="block" gap="base">
             <s-heading>Manage</s-heading>
             <s-stack direction="block" gap="base">
               <s-text-field
-                label="Rename wishlist"
+                label="Rename quotation"
                 value={renameValue}
                 onChange={(v) => setRenameValue(asText(v))}
                 disabled={renaming || deleting}
@@ -512,121 +551,121 @@ function getAltText(v, p, title) {
                 </s-button>
 
                 <s-button onClick={deleteWishlist} disabled={deleting || renaming} variant="secondary">
-                  {deleting ? "Deleting…" : "Delete wishlist"}
+                  {deleting ? "Deleting…" : "Delete quotation"}
                 </s-button>
               </s-stack>
+            </s-stack>
             </s-stack>
           </s-section>
         ),
       },
       {
-        id: "detail-items",
-        show: true,
-        node: (
-          <s-section>
-            <s-heading>Items</s-heading>
+  id: "detail-items",
+  show: true,
+  node: (
+    <s-section>
+      <s-stack direction="block" gap="base">
+        <s-heading>Items</s-heading>
+<s-divider></s-divider>
+        {wl && items.length === 0 && <s-text>No items yet.</s-text>}
 
-            {wl && items.length === 0 && <s-text>No items yet.</s-text>}
+        {wl && items.length > 0 && (
+          <s-stack direction="block" gap="base">
+            {items.map((it) => {
+              const pGid = String(it.productId || "").startsWith("gid://")
+                ? it.productId
+                : `gid://shopify/Product/${it.productId}`;
 
-            {wl && items.length > 0 && (
-              <s-unordered-list>
-                {items.map((it) => {
-                  const pGid = String(it.productId || "").startsWith("gid://")
-                    ? it.productId
-                    : `gid://shopify/Product/${it.productId}`;
-                  const vGid = String(it.variantId || "").startsWith("gid://")
-                    ? it.variantId
-                    : `gid://shopify/ProductVariant/${it.variantId}`;
+              const vGid = String(it.variantId || "").startsWith("gid://")
+                ? it.variantId
+                : `gid://shopify/ProductVariant/${it.variantId}`;
 
-                  const v = lookup?.variantMap?.[vGid];
-                  const p = lookup?.productMap?.[pGid];
+              const v = lookup?.variantMap?.[vGid];
+              const p = lookup?.productMap?.[pGid];
 
-                  const title = v?.product?.title || p?.title || `Product ${it.productId}`;
-                  const variantTitle = v?.title && v.title !== "Default Title" ? v.title : null;
+              const title = v?.product?.title || p?.title || `Product ${it.productId}`;
+              const variantTitle = v?.title && v.title !== "Default Title" ? v.title : null;
 
-                  console.log("LOOKUP SAMPLE (variant)", v);
-  console.log("LOOKUP SAMPLE (product)", p);
+              const priceText = formatMoney(v?.price);
 
+              const qty = Number(it.quantity || 1);
+              const unitAmount = v?.price?.amount != null ? Number(v.price.amount) : null;
 
-                  const price =
-  v?.price?.amount
-    ? `${v.price.currencyCode} ${v.price.amount}`
-    : v?.price
-    ? `£${v.price}`
-    : null;
+              const lineTotal =
+                unitAmount != null && v?.price?.currencyCode
+                  ? formatMoney({
+                      amount: (unitAmount * qty).toFixed(2),
+                      currencyCode: v.price.currencyCode,
+                    })
+                  : null;
 
-    const priceText = formatMoney(v?.price);
+              const imgUrl = getImageUrl(v, p);
+              const linkUrl = getProductUrl(v, p);
+              const alt = getAltText(v, p, title);
 
-                  return (
-  <s-list-item key={it.id}>
-    <s-stack direction="block" gap="base">
-      {/* Row: image + text */}
-      <s-stack direction="inline" gap="base">
-        {(() => {
-          const imgUrl = getImageUrl(v, p);
-          const linkUrl = getProductUrl(v, p);
-          const alt = getAltText(v, p, title);
+              const thumb = imgUrl ? (
+                <s-box inlineSize="120px" blockSize="120px">
+                  <s-image src={imgUrl} alt={alt} objectFit="cover" />
+                </s-box>
+              ) : (
+                <s-box inlineSize="120px" blockSize="120px">
+                  <s-text>No image</s-text>
+                </s-box>
+              );
 
-          const thumb = imgUrl ? (
-            <s-image src={imgUrl} alt={alt} />
+              return (
+                <s-box key={it.id}>
+                  <s-stack direction="block" gap="base">
+                    {/* Row: image + text */}
+                    <s-stack direction="inline" gap="base">
+                      {linkUrl ? <s-link href={linkUrl}>{thumb}</s-link> : thumb}
 
-          ) : (
-            <s-box>
-              <s-text>No image</s-text>
-            </s-box>
-          );
+                      <s-stack direction="block" gap="small-100">
+                        <s-text>{title}</s-text>
+                        {variantTitle && <s-text>{variantTitle}</s-text>}
+                        {priceText ? <s-text>Price: {priceText}</s-text> : null}
+                        <s-text>Qty: {qty}</s-text>
+                        {lineTotal ? <s-text>Total: {lineTotal}</s-text> : null}
+                      </s-stack>
+                    </s-stack>
 
-          // If we have a URL, wrap it with a link; otherwise just show the image
-          return linkUrl ? (
-            <s-link href={linkUrl}>{thumb}</s-link>
-          ) : (
-            thumb
-          );
-        })()}
+                    {/* Controls */}
+                    <s-stack direction="inline" gap="base">
+                      <s-button
+                        onClick={() => updateItemQty(it.id, (it.quantity || 1) - 1)}
+                        variant="secondary"
+                      >
+                        −
+                      </s-button>
 
-        <s-stack direction="block" gap="base">
-          <s-text>{title}</s-text>
-          {variantTitle && <s-text>{variantTitle}</s-text>}
-          {priceText ? <s-text>Price: {priceText}</s-text> : null}
-          <s-text>Qty: {it.quantity}</s-text>
-        </s-stack>
+                      <s-button
+                        onClick={() => updateItemQty(it.id, (it.quantity || 1) + 1)}
+                        variant="secondary"
+                      >
+                        +
+                      </s-button>
+
+                      <s-button onClick={() => removeItem(it.id)} variant="secondary">
+                        Remove
+                      </s-button>
+                    </s-stack>
+                    <s-divider></s-divider>
+                  </s-stack>
+                </s-box>
+              );
+            })}
+          </s-stack>
+        )}
       </s-stack>
-
-      {/* Controls */}
-      <s-stack direction="inline" gap="base">
-        <s-button
-          onClick={() => updateItemQty(it.id, (it.quantity || 1) - 1)}
-          variant="secondary"
-        >
-          −
-        </s-button>
-
-        <s-button
-          onClick={() => updateItemQty(it.id, (it.quantity || 1) + 1)}
-          variant="secondary"
-        >
-          +
-        </s-button>
-
-        <s-button onClick={() => removeItem(it.id)} variant="secondary">
-          Remove
-        </s-button>
-      </s-stack>
-    </s-stack>
-  </s-list-item>
-);
-
-                })}
-              </s-unordered-list>
-            )}
-          </s-section>
-        ),
-      },
+    </s-section>
+  ),
+},
       {
         id: "detail-submit",
         show: true,
         node: (
           <s-section>
+            <s-stack direction="block" gap="base">
             <s-heading>Submit for quote</s-heading>
             <s-stack direction="block" gap="base">
               <s-text-field
@@ -642,13 +681,10 @@ function getAltText(v, p, title) {
 
               {submitResult && (
                 <s-banner tone="success">
-                  <s-text>
-                    Submitted:{" "}
-                    {submitResult?.submission?.id || submitResult?.id || "OK"} • Status:{" "}
-                    {submitResult?.submission?.status || submitResult?.status || "created"}
-                  </s-text>
+                  <s-text>Your quote request has been submitted successfully.</s-text>
                 </s-banner>
               )}
+            </s-stack>
             </s-stack>
           </s-section>
         ),
@@ -668,20 +704,22 @@ function getAltText(v, p, title) {
 
   // INDEX VIEW
   return (
+
     <s-page>
+<s-heading>Quotations</s-heading>
       <s-section>
-        <s-heading>Wishlists</s-heading>
+        
 
         <s-stack direction="block" gap="base">
           <s-text-field
-            label="New wishlist name"
+            label="New quotation name"
             value={newName}
             onChange={(v) => setNewName(asText(v))}
             disabled={creating}
           />
 
           <s-button onClick={createWishlist} disabled={creating} variant="primary">
-            {creating ? "Creating…" : "Create wishlist"}
+            {creating ? "Creating…" : "Create quotation"}
           </s-button>
 
           {createError && <s-text>Error: {createError}</s-text>}
@@ -692,21 +730,20 @@ function getAltText(v, p, title) {
         {loadingIndex && <s-text>Loading…</s-text>}
         {!loadingIndex && indexError && <s-text>Error: {indexError}</s-text>}
 
-        {!loadingIndex && !indexError && wishlists.length === 0 && <s-text>No wishlists yet.</s-text>}
+        {!loadingIndex && !indexError && wishlists.length === 0 && <s-text>No quotations yet.</s-text>}
 
         {!loadingIndex && !indexError && wishlists.length > 0 && (
-          <s-unordered-list>
+          <s-stack direction="block" gap="base">
             {wishlists.map((w) => (
-              <s-list-item key={w.id}>
+              <s-box key={w.id}>
                 <s-stack direction="inline" gap="base">
                   <s-button onClick={() => openWishlist(w.id)} variant="secondary">
-                    Open
+                    View {w.name} quotation
                   </s-button>
-                  <s-text>{w.name}</s-text>
                 </s-stack>
-              </s-list-item>
+              </s-box>
             ))}
-          </s-unordered-list>
+          </s-stack>
         )}
       </s-section>
     </s-page>

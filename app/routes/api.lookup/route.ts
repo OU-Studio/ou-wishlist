@@ -3,6 +3,8 @@ import type { ActionFunctionArgs, LoaderFunctionArgs } from "react-router";
 import { asString, readBody } from "../../utils/api.server"; // adjust path if needed
 import { resolveCustomerIdentity } from "../../utils/identity.server"; // adjust path if needed
 import prisma from "../../db.server"; // or "../../db.server" depending on your structure
+import { getAdminAccessToken } from "../../utils/shopToken.server";
+
 
 const EXT_ORIGIN = "https://extensions.shopifycdn.com";
 const ADMIN_API_VERSION = "2025-10";
@@ -38,20 +40,7 @@ export async function loader({ request }: LoaderFunctionArgs) {
 }
 
 // Prefer OFFLINE token; fallback to newest.
-async function getShopAccessToken(shopDomain: string) {
-  const offline = await prisma.session.findFirst({
-    where: { shop: shopDomain, isOnline: false },
-    select: { accessToken: true },
-  });
-  if (offline?.accessToken) return offline.accessToken;
 
-  const any = await prisma.session.findFirst({
-    where: { shop: shopDomain },
-    select: { accessToken: true },
-    orderBy: { expires: "desc" },
-  });
-  return any?.accessToken ?? null;
-}
 
 function normalizeGid(id: string, kind: "Product" | "ProductVariant") {
   if (!id) return null;
@@ -67,7 +56,7 @@ export async function action({ request }: ActionFunctionArgs) {
 
     const identity = await resolveCustomerIdentity(request);
 
-    const accessToken = await getShopAccessToken(identity.shop.shop);
+    const accessToken = await getAdminAccessToken(identity.shop.shop);
     if (!accessToken) {
       return corsJson(
         request,

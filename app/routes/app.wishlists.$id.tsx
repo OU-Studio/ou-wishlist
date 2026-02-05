@@ -62,7 +62,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
 
   const wishlistId = params.id;
   if (!wishlistId) {
-    throw new Response("Missing wishlist id", { status: 400 });
+    throw new Response("Missing quotation id", { status: 400 });
   }
 
   const storeHandle = String(session.shop || "").split(".")[0] || "unknown";
@@ -117,7 +117,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
   });
 
   if (!wl) {
-    throw new Response("Wishlist not found", { status: 404 });
+    throw new Response("quotation not found", { status: 404 });
   }
 
   const data: LoaderData = {

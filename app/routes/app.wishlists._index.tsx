@@ -203,7 +203,7 @@ export default function WishlistsAdminPage() {
   return (
     <s-page>
       <s-section>
-        <s-heading>Wishlists  v4</s-heading>
+        <s-heading>Quotations</s-heading>
 
         <Form method="get">
           <s-stack direction="block" gap="base">
@@ -252,7 +252,7 @@ export default function WishlistsAdminPage() {
 
       <s-section>
         {data.rows.length === 0 ? (
-          <s-text>No wishlists found.</s-text>
+          <s-text>No quotations found.</s-text>
         ) : (
           <s-unordered-list>
             {data.rows.map((w) => {

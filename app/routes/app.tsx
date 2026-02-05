@@ -20,7 +20,7 @@ export default function App() {
       <s-app-nav>
         <s-link href="/app">Home</s-link>
         <s-link href="/app/currency-rules">Currency Rules</s-link>
-        <s-link href="/app/wishlists">Wishlists</s-link>
+        <s-link href="/app/wishlists">Quotations</s-link>
       </s-app-nav>
       <Outlet />
     </AppProvider>
