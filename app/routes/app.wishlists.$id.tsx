@@ -4,6 +4,8 @@ import { Link, useLoaderData } from "react-router";
 import { authenticate } from "../shopify.server";
 import { prisma } from "../db.server";
 
+type Money = { amount: string; currencyCode: string } | null;
+
 type LoaderData = {
   storeHandle: string;
   wishlist: {
@@ -32,7 +34,17 @@ type LoaderData = {
       draftOrderId: string | null;
     } | null;
   };
+  lookup: {
+    productMap: Record<string, any>;
+    variantMap: Record<string, any>;
+  };
 };
+
+function normalizeGid(id: string, kind: "Product" | "ProductVariant") {
+  if (!id) return null;
+  if (id.startsWith("gid://")) return id;
+  return `gid://shopify/${kind}/${id}`;
+}
 
 function formatDateTimeGB(iso: string) {
   return new Date(iso).toLocaleString("en-GB", {
@@ -52,18 +64,63 @@ function draftOrderAdminUrl(storeHandle: string, draftOrderGid: string) {
 function displayCustomer(c: LoaderData["wishlist"]["customer"]) {
   if (!c) return "—";
   const name = [c.firstName, c.lastName].filter(Boolean).join(" ").trim();
-  if (name) return `${name} • #${c.customerId}`;
-  if (c.email) return `${c.email} • #${c.customerId}`;
-  return `#${c.customerId}`;
+  if (name && c.email) return `${name} • ${c.email}`;
+  if (name) return name;
+  if (c.email) return c.email;
+  return "—";
+}
+
+const CURRENCY_SYMBOL: Record<string, string> = {
+  GBP: "£",
+  EUR: "€",
+  USD: "$",
+  CAD: "$",
+  AUD: "$",
+  NZD: "$",
+  JPY: "¥",
+  CNY: "¥",
+  HKD: "$",
+  SGD: "$",
+  CHF: "CHF ",
+  SEK: "kr ",
+  NOK: "kr ",
+  DKK: "kr ",
+};
+
+function formatMoney(price: Money) {
+  if (!price?.amount) return null;
+  const n = Number(price.amount);
+  const amountStr = Number.isFinite(n)
+    ? n.toLocaleString("en-GB", { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+    : String(price.amount);
+
+  const symbol = price.currencyCode ? (CURRENCY_SYMBOL[price.currencyCode] ?? `${price.currencyCode} `) : "";
+  return `${symbol}${amountStr}`;
+}
+
+function getImageUrl(v: any, p: any) {
+  return (
+    v?.image?.url ||
+    v?.image?.src ||
+    p?.featuredImage?.url ||
+    p?.featuredImage?.src ||
+    p?.image?.url ||
+    p?.image?.src ||
+    p?.images?.nodes?.[0]?.url ||
+    p?.media?.nodes?.[0]?.previewImage?.url ||
+    null
+  );
+}
+
+function getAltText(v: any, p: any, title: string) {
+  return v?.image?.altText || p?.featuredImage?.altText || title || "Product image";
 }
 
 export async function loader({ request, params }: LoaderFunctionArgs) {
-  const { session } = await authenticate.admin(request);
+  const { session, admin } = await authenticate.admin(request);
 
   const wishlistId = params.id;
-  if (!wishlistId) {
-    throw new Response("Missing quotation id", { status: 400 });
-  }
+  if (!wishlistId) throw new Response("Missing quotation id", { status: 400 });
 
   const storeHandle = String(session.shop || "").split(".")[0] || "unknown";
 
@@ -72,9 +129,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     select: { id: true },
   });
 
-  if (!shopRow) {
-    throw new Response("Shop not found", { status: 404 });
-  }
+  if (!shopRow) throw new Response("Shop not found", { status: 404 });
 
   const wl = await prisma.wishlist.findFirst({
     where: { id: wishlistId, shopId: shopRow.id },
@@ -87,7 +142,6 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       customer: {
         select: {
           customerId: true,
-          // remove if your schema doesn’t have them
           firstName: true,
           lastName: true,
           email: true,
@@ -116,8 +170,83 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
     },
   });
 
-  if (!wl) {
-    throw new Response("quotation not found", { status: 404 });
+  if (!wl) throw new Response("quotation not found", { status: 404 });
+
+  // Build GID lists for lookup
+  const productIds = Array.from(
+    new Set(
+      wl.items
+        .map((it) => normalizeGid(String(it.productId || ""), "Product"))
+        .filter(Boolean) as string[]
+    )
+  );
+
+  const variantIds = Array.from(
+    new Set(
+      wl.items
+        .map((it) => normalizeGid(String(it.variantId || ""), "ProductVariant"))
+        .filter(Boolean) as string[]
+    )
+  );
+
+  let productMap: Record<string, any> = {};
+  let variantMap: Record<string, any> = {};
+
+  if (productIds.length || variantIds.length) {
+    const gql = `#graphql
+      query Lookup($productIds: [ID!]!, $variantIds: [ID!]!) {
+        shop { currencyCode }
+
+        products: nodes(ids: $productIds) {
+          ... on Product {
+            id
+            title
+            handle
+            featuredImage { url altText }
+          }
+        }
+
+        variants: nodes(ids: $variantIds) {
+          ... on ProductVariant {
+            id
+            title
+            sku
+            image { url altText }
+            product { id title handle }
+            price
+          }
+        }
+      }
+    `;
+
+    const resp = await admin.graphql(gql, {
+      variables: { productIds, variantIds },
+    });
+
+    const json: any = await resp.json();
+
+    const shopCurrency = json?.data?.shop?.currencyCode ?? null;
+
+    const products = Array.isArray(json?.data?.products) ? json.data.products : [];
+    const variants = Array.isArray(json?.data?.variants) ? json.data.variants : [];
+
+    for (const p of products) {
+      if (p?.id) productMap[p.id] = p;
+    }
+
+    for (const v of variants) {
+      if (!v?.id) continue;
+
+      // Your other code assumes v.price may be scalar -> normalize to {amount,currencyCode}
+      const baseAmount = v?.price != null ? String(v.price) : null;
+      const normalizedPrice =
+        baseAmount && shopCurrency ? { amount: baseAmount, currencyCode: shopCurrency } : null;
+
+      variantMap[v.id] = {
+        ...v,
+        price: normalizedPrice,
+      };
+    }
   }
 
   const data: LoaderData = {
@@ -131,15 +260,15 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
       customer: wl.customer
         ? {
             customerId: wl.customer.customerId,
-            firstName: (wl.customer as any).firstName ?? null,
-            lastName: (wl.customer as any).lastName ?? null,
-            email: (wl.customer as any).email ?? null,
+            firstName: wl.customer.firstName ?? null,
+            lastName: wl.customer.lastName ?? null,
+            email: wl.customer.email ?? null,
           }
         : null,
       items: wl.items.map((it) => ({
         id: it.id,
-        productId: it.productId,
-        variantId: it.variantId,
+        productId: String(it.productId),
+        variantId: String(it.variantId),
         quantity: it.quantity,
         createdAt: it.createdAt?.toISOString?.() ?? undefined,
       })),
@@ -152,6 +281,7 @@ export async function loader({ request, params }: LoaderFunctionArgs) {
           }
         : null,
     },
+    lookup: { productMap, variantMap },
   };
 
   return data;
@@ -198,19 +328,62 @@ export default function WishlistDetailPage() {
         {w.items.length === 0 ? (
           <s-text>No items.</s-text>
         ) : (
-          <s-unordered-list>
-            {w.items.map((it) => (
-              <s-list-item key={it.id}>
-                <s-stack direction="block" gap="base">
-                  <s-text>
-                    Variant: <strong>{it.variantId}</strong>
-                  </s-text>
-                  <s-text>Product: {it.productId}</s-text>
-                  <s-text>Qty: {it.quantity}</s-text>
-                </s-stack>
-              </s-list-item>
-            ))}
-          </s-unordered-list>
+          <s-stack direction="block" gap="base">
+            {w.items.map((it) => {
+              const pGid = normalizeGid(String(it.productId || ""), "Product")!;
+              const vGid = normalizeGid(String(it.variantId || ""), "ProductVariant")!;
+
+              const v = data.lookup.variantMap[vGid];
+              const p = data.lookup.productMap[pGid];
+
+              const title = v?.product?.title || p?.title || `Product ${it.productId}`;
+              const variantTitle = v?.title && v.title !== "Default Title" ? v.title : null;
+
+              const qty = Number(it.quantity || 1);
+              const unitPrice: Money = v?.price ?? null;
+              const priceText = formatMoney(unitPrice);
+
+              const unitAmount = unitPrice?.amount != null ? Number(unitPrice.amount) : null;
+              const lineTotal =
+                unitAmount != null && unitPrice?.currencyCode
+                  ? formatMoney({
+                      amount: (unitAmount * qty).toFixed(2),
+                      currencyCode: unitPrice.currencyCode,
+                    })
+                  : null;
+
+              const imgUrl = getImageUrl(v, p);
+              const alt = getAltText(v, p, title);
+
+              return (
+                <s-box key={it.id}>
+                  <s-stack direction="block" gap="base">
+                    <s-stack direction="inline" gap="base">
+                      {imgUrl ? (
+                        <s-box inlineSize="120px" blockSize="120px">
+                          <s-image src={imgUrl} alt={alt} objectFit="cover" />
+                        </s-box>
+                      ) : (
+                        <s-box inlineSize="120px" blockSize="120px">
+                          <s-text>No image</s-text>
+                        </s-box>
+                      )}
+
+                      <s-stack direction="block" gap="small-100">
+                        <s-text>{title}</s-text>
+                        {variantTitle ? <s-text>{variantTitle}</s-text> : null}
+                        {priceText ? <s-text>Price: {priceText}</s-text> : null}
+                        <s-text>Qty: {qty}</s-text>
+                        {lineTotal ? <s-text>Total: {lineTotal}</s-text> : null}
+                      </s-stack>
+                    </s-stack>
+
+                    <s-divider></s-divider>
+                  </s-stack>
+                </s-box>
+              );
+            })}
+          </s-stack>
         )}
       </s-section>
     </s-page>
