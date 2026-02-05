@@ -42,14 +42,27 @@ export async function loader({ request }: { request: Request }) {
     const identity = await resolveCustomerIdentity(request);
 
     const wishlists = await prisma.wishlist.findMany({
-      where: {
-        shopId: identity.shop.id,
-        customerId: identity.customer.id,
-        isArchived: false,
+  where: {
+    shopId: identity.shop.id,
+    customerId: identity.customer.id,
+    isArchived: false,
+  },
+  orderBy: { updatedAt: "desc" },
+  select: {
+    id: true,
+    name: true,
+    createdAt: true,
+    updatedAt: true,
+    customer: {
+      select: {
+        email: true,
+        firstName: true,
+        lastName: true,
       },
-      orderBy: { updatedAt: "desc" },
-      select: { id: true, name: true, createdAt: true, updatedAt: true },
-    });
+    },
+  },
+});
+
 
     return corsJson(request, { wishlists }, 200);
   } catch (e: any) {

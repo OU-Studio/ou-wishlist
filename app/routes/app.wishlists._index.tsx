@@ -57,10 +57,12 @@ function draftOrderAdminUrl(storeHandle: string, draftOrderGid: string) {
 function displayCustomer(c: LoaderData["rows"][number]["customer"]) {
   if (!c) return "—";
   const name = [c.firstName, c.lastName].filter(Boolean).join(" ").trim();
-  if (name) return `${name} • #${c.customerId}`;
-  if (c.email) return `${c.email} • #${c.customerId}`;
-  return `#${c.customerId}`;
+  if (name && c.email) return `${name} • ${c.email}`;
+  if (name) return name;
+  if (c.email) return c.email;
+  return "—";
 }
+
 
 export async function loader({ request }: LoaderFunctionArgs) {
   const { session } = await authenticate.admin(request);
