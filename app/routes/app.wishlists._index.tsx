@@ -2,6 +2,7 @@ import type { LoaderFunctionArgs } from "react-router";
 import { Form, Link, useLoaderData, useSearchParams } from "react-router";
 import { authenticate } from "../shopify.server";
 import { prisma } from "../db.server";
+import { enrichCustomerProfile } from "../utils/customerProfile.server";
 
 
 type LoaderData = {
@@ -118,65 +119,111 @@ export async function loader({ request }: LoaderFunctionArgs) {
       ? [{ name: "asc" as const }, { createdAt: "desc" as const }]
       : [{ createdAt: "desc" as const }];
 
-  const [total, wishlists] = await Promise.all([
-    prisma.wishlist.count({ where }),
-    prisma.wishlist.findMany({
-      where,
-      orderBy,
-      skip,
-      take,
-      select: {
-        id: true,
-        name: true,
-        isArchived: true,
-        createdAt: true,
-        _count: { select: { items: true } },
-        customer: {
-          select: {
-            id: true,
-            customerId: true,
-            // If your schema doesn’t have these, remove them
-            firstName: true,
-            lastName: true,
-            email: true,
-          },
-        },
-        submissions: {
-          orderBy: { createdAt: "desc" },
-          take: 1,
-          select: {
-            id: true,
-            status: true,
-            draftOrderId: true,
-          },
+  const [total, initialWishlists] = await Promise.all([
+  prisma.wishlist.count({ where }),
+  prisma.wishlist.findMany({
+    where,
+    orderBy,
+    skip,
+    take,
+    select: {
+      id: true,
+      name: true,
+      isArchived: true,
+      createdAt: true,
+      _count: { select: { items: true } },
+      customer: {
+        select: {
+          id: true,
+          customerId: true,
+          firstName: true,
+          lastName: true,
+          email: true,
         },
       },
-    }),
-  ]);
+      submissions: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { id: true, status: true, draftOrderId: true },
+      },
+    },
+  }),
+]);
 
-  const rows: LoaderData["rows"] = wishlists.map((w) => ({
-    id: w.id,
-    name: w.name,
-    isArchived: w.isArchived,
-    createdAt: w.createdAt.toISOString(),
-    itemCount: w._count.items,
-    customer: w.customer
-      ? {
-          id: w.customer.id,
-          customerId: w.customer.customerId,
-          firstName: (w.customer as any).firstName ?? null,
-          lastName: (w.customer as any).lastName ?? null,
-          email: (w.customer as any).email ?? null,
-        }
-      : null,
-    latestSubmission: w.submissions?.[0]
-      ? {
-          id: w.submissions[0].id,
-          status: w.submissions[0].status,
-          draftOrderId: w.submissions[0].draftOrderId,
-        }
-      : null,
-  }));
+let wishlists = initialWishlists;
+
+// Enrich missing customer profiles
+const customerIdsToEnrich = Array.from(
+  new Set(
+    wishlists
+      .map((w) => w.customer)
+      .filter(Boolean)
+      .filter((c) => !(c!.email || c!.firstName || c!.lastName))
+      .map((c) => c!.customerId)
+  )
+);
+
+if (customerIdsToEnrich.length) {
+  await Promise.all(
+    customerIdsToEnrich.map((customerId) =>
+      enrichCustomerProfile(session.shop, shopRow.id, customerId)
+    )
+  );
+
+  // Re-fetch to include updated customer fields
+  wishlists = await prisma.wishlist.findMany({
+    where,
+    orderBy,
+    skip,
+    take,
+    select: {
+      id: true,
+      name: true,
+      isArchived: true,
+      createdAt: true,
+      _count: { select: { items: true } },
+      customer: {
+        select: {
+          id: true,
+          customerId: true,
+          firstName: true,
+          lastName: true,
+          email: true,
+        },
+      },
+      submissions: {
+        orderBy: { createdAt: "desc" },
+        take: 1,
+        select: { id: true, status: true, draftOrderId: true },
+      },
+    },
+  });
+}
+
+const rows: LoaderData["rows"] = wishlists.map((w) => ({
+  id: w.id,
+  name: w.name,
+  isArchived: w.isArchived,
+  createdAt: w.createdAt.toISOString(),
+  itemCount: w._count.items,
+  customer: w.customer
+    ? {
+        id: w.customer.id,
+        customerId: w.customer.customerId,
+        firstName: w.customer.firstName ?? null,
+        lastName: w.customer.lastName ?? null,
+        email: w.customer.email ?? null,
+      }
+    : null,
+  latestSubmission: w.submissions?.[0]
+    ? {
+        id: w.submissions[0].id,
+        status: w.submissions[0].status,
+        draftOrderId: w.submissions[0].draftOrderId,
+      }
+    : null,
+}));
+
 
   return {
     q,
@@ -189,6 +236,8 @@ export async function loader({ request }: LoaderFunctionArgs) {
     storeHandle,
   } satisfies LoaderData;
 }
+
+
 
 export default function WishlistsAdminPage() {
   const data = useLoaderData() as LoaderData;
