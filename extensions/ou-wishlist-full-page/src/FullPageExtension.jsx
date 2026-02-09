@@ -667,6 +667,7 @@ function Extension() {
           <s-section>
             <s-stack direction="block" gap="base">
             <s-heading>Submit for quote</s-heading>
+            <s-text>This sends your quotation to us. A consultant will be in touch to discuss pricing, lead times and delivery.</s-text>
             <s-stack direction="block" gap="base">
               <s-text-field
                 label="Customer note (optional)"
@@ -707,6 +708,7 @@ function Extension() {
 
     <s-page>
 <s-heading>Quotations</s-heading>
+<s-text>Build quotations as you browse the site. Add items from any product page, then submit them here when you're ready. A consultant will be in touch to confirm pricing, lead times and delivery.</s-text>
       <s-section>
         
 
