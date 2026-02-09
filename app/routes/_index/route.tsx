@@ -10,34 +10,25 @@ const API_BASE = "https://studio-ore-quote.up.railway.app"; // or your own origi
 
 
 
-async function getWishlistsSSR(shop: string, customerId: string | null) {
-  // This assumes your API allows shop/customerId without bearer token.
-  // If it doesn't, this request will fail and we’ll switch to a proxy-safe endpoint next.
-  const u = new URL(`${API_BASE}/api/wishlists`);
-  u.searchParams.set("shop", shop);
-  if (customerId) u.searchParams.set("customerId", customerId);
+async function getWishlistsSSR(request: Request) {
+  const proxyApiUrl = new URL(request.url);
 
-  const res = await fetch(u.toString(), { headers: { Accept: "application/json" } });
-  const text = await res.text();
+  // IMPORTANT: must match your proxy-api route filename
+  proxyApiUrl.pathname = "/proxy-api/wishlists";
 
-  let data: any = null;
-  try {
-    data = text ? JSON.parse(text) : null;
-  } catch {
-    data = { raw: text };
-  }
+  const res = await fetch(proxyApiUrl.toString(), {
+    headers: { Accept: "application/json" },
+  });
 
   if (!res.ok) {
-    const msg =
-      data?.error ||
-      data?.message ||
-      `Wishlists request failed (${res.status})`;
-    throw new Response(msg, { status: res.status });
+    const text = await res.text();
+    throw new Error(text || `Proxy wishlist fetch failed (${res.status})`);
   }
 
-  // Adjust depending on your response shape
-  return Array.isArray(data?.wishlists) ? data.wishlists : (Array.isArray(data) ? data : []);
+  const data = await res.json();
+  return Array.isArray(data?.wishlists) ? data.wishlists : [];
 }
+
 
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
@@ -55,7 +46,7 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
     let error: string | null = null;
 
     try {
-      wishlists = await getWishlistsSSR(shop, customerId);
+      wishlists = await getWishlistsSSR(request);
     } catch (e: any) {
       error = e?.message || "Failed to load wishlists";
     }
