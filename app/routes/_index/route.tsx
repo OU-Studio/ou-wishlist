@@ -1,5 +1,6 @@
 import type { LoaderFunctionArgs } from "react-router";
 import { redirect, Form, useLoaderData } from "react-router";
+import { WishlistPage } from "../../components/WishlistPage";
 
 import { login } from "../../shopify.server";
 
@@ -34,17 +35,16 @@ export default function App() {
 
   if (data.isAppProxy) {
     return (
-      <div style={{ padding: 24 }}>
-        <h1>Quote page</h1>
-        <p>Shop: {data.shop}</p>
-        <p>Customer: {data.loggedInCustomerId ?? "not logged in"}</p>
-      </div>
+      <WishlistPage
+  shop={data.shop ?? ""}
+  customerId={data.loggedInCustomerId ?? null}
+/>
     );
   }
 
   return (
     <div className={styles.index}>
-      
+
     </div>
   );
 }
