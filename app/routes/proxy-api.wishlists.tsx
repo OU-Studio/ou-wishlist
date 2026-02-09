@@ -2,7 +2,13 @@ import type { LoaderFunctionArgs } from "react-router";
 import crypto from "crypto";
 import { prisma } from "../db.server";
 
-// App Proxy signature verification (uses `signature` param)
+
+function rfc3986Encode(input: string) {
+  return encodeURIComponent(input).replace(/[!'()*]/g, (c) =>
+    "%" + c.charCodeAt(0).toString(16).toUpperCase()
+  );
+}
+
 function verifyProxy(url: URL, secret: string) {
   const params = new URLSearchParams(url.search);
   const signature = params.get("signature");
@@ -10,17 +16,14 @@ function verifyProxy(url: URL, secret: string) {
 
   params.delete("signature");
 
-  // Shopify expects lexicographically sorted query string
   const message = [...params.entries()]
     .sort(([a], [b]) => a.localeCompare(b))
-    .map(([k, v]) => `${k}=${v}`)
+    .map(([k, v]) => `${rfc3986Encode(k)}=${rfc3986Encode(v)}`)
     .join("&");
 
   const digest = crypto.createHmac("sha256", secret).update(message).digest("hex");
 
-  // timingSafeEqual requires equal-length buffers
   if (digest.length !== signature.length) return false;
-
   return crypto.timingSafeEqual(Buffer.from(digest), Buffer.from(signature));
 }
 
