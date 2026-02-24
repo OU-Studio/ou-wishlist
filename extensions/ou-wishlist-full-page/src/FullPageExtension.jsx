@@ -522,7 +522,7 @@ function Extension() {
           <s-section>
             <s-stack direction="block" gap="base">
               
-              <s-heading>Quotation: {wl?.name || "Quotations"}</s-heading>
+              <s-heading>Project: {wl?.name || "Projects"}</s-heading>
             </s-stack>
 
             {loadingDetail && <s-text>Loading…</s-text>}
@@ -539,7 +539,7 @@ function Extension() {
             <s-heading>Manage</s-heading>
             <s-stack direction="block" gap="base">
               <s-text-field
-                label="Rename quotation"
+                label="Rename project"
                 value={renameValue}
                 onChange={(v) => setRenameValue(asText(v))}
                 disabled={renaming || deleting}
@@ -551,7 +551,7 @@ function Extension() {
                 </s-button>
 
                 <s-button onClick={deleteWishlist} disabled={deleting || renaming} variant="secondary">
-                  {deleting ? "Deleting…" : "Delete quotation"}
+                  {deleting ? "Deleting…" : "Delete project"}
                 </s-button>
               </s-stack>
             </s-stack>
@@ -714,14 +714,14 @@ function Extension() {
 
         <s-stack direction="block" gap="base">
           <s-text-field
-            label="New quotation name"
+            label="New project name"
             value={newName}
             onChange={(v) => setNewName(asText(v))}
             disabled={creating}
           />
 
           <s-button onClick={createWishlist} disabled={creating} variant="primary">
-            {creating ? "Creating…" : "Create quotation"}
+            {creating ? "Creating…" : "New Project List"}
           </s-button>
 
           {createError && <s-text>Error: {createError}</s-text>}
@@ -740,7 +740,7 @@ function Extension() {
               <s-box key={w.id}>
                 <s-stack direction="inline" gap="base">
                   <s-button onClick={() => openWishlist(w.id)} variant="secondary">
-                    View {w.name} quotation
+                    View {w.name} project
                   </s-button>
                 </s-stack>
               </s-box>
