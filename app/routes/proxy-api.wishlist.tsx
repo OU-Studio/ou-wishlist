@@ -19,6 +19,95 @@ async function resolveShopAndCustomer(shopDomain: string, shopifyCustomerId: str
   return { shopId: shopRow.id, customerPk: customerRow.id };
 }
 
+async function getOfflineAccessToken(shopDomain: string) {
+  // Shopify session storage typically has an offline session with isOnline=false
+  const sess = await prisma.session.findFirst({
+    where: { shop: shopDomain, isOnline: false },
+    select: { accessToken: true },
+  });
+  return sess?.accessToken || null;
+}
+
+type Snapshot = {
+  title: string | null;
+  handle: string | null;
+  variantTitle: string | null;
+  sku: string | null;
+  price: string | null;
+  imageUrl: string | null;
+};
+
+async function fetchVariantSnapshots(shopDomain: string, accessToken: string, variantIds: string[]) {
+  const query = `
+    query Variants($ids: [ID!]!) {
+      nodes(ids: $ids) {
+        ... on ProductVariant {
+          id
+          title
+          sku
+          price
+          image { url }
+          product {
+            title
+            handle
+            featuredImage { url }
+          }
+        }
+      }
+    }
+  `;
+
+  const res = await fetch(`https://${shopDomain}/admin/api/2024-10/graphql.json`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shopify-Access-Token": accessToken,
+    },
+    body: JSON.stringify({ query, variables: { ids: variantIds } }),
+  });
+
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    throw new Error(`Shopify lookup failed (${res.status}): ${text || "no body"}`);
+  }
+
+  const json = await res.json();
+  const nodes = json?.data?.nodes || [];
+
+  const map = new Map<string, Snapshot>();
+  for (const v of nodes) {
+    if (!v?.id) continue;
+    map.set(v.id, {
+      title: v.product?.title ?? null,
+      handle: v.product?.handle ?? null,
+      variantTitle: v.title ?? null,
+      sku: v.sku ?? null,
+      price: v.price ?? null,
+      imageUrl: v.image?.url ?? v.product?.featuredImage?.url ?? null,
+    });
+  }
+
+  return map;
+}
+
+function needsBackfill(it: {
+  title: string | null;
+  handle: string | null;
+  imageUrl: string | null;
+  variantTitle: string | null;
+  sku: string | null;
+  price: string | null;
+}) {
+  return (
+    !it.title ||
+    !it.handle ||
+    !it.imageUrl ||
+    !it.variantTitle ||
+    !it.sku ||
+    !it.price
+  );
+}
+
 export const loader = async ({ request }: LoaderFunctionArgs) => {
   const url = new URL(request.url);
 
@@ -61,6 +150,60 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
       price: true,
     },
   });
+
+  // --- Lazy backfill for older items with missing snapshot fields ---
+  const missing = items.filter(needsBackfill);
+  if (missing.length) {
+    const accessToken = await getOfflineAccessToken(shopDomain);
+
+    // If no token available, just return what we have (page will still work, but without snapshots)
+    if (accessToken) {
+      // Shopify nodes() can take many IDs; keep it conservative
+      const ids = [...new Set(missing.map((m) => m.variantId))].slice(0, 80);
+
+      try {
+        const snapshotByVariantId = await fetchVariantSnapshots(shopDomain, accessToken, ids);
+
+        // Update DB rows that are missing data
+        const updates = missing.map((it) => {
+          const snap = snapshotByVariantId.get(it.variantId);
+          if (!snap) return null;
+
+          return prisma.wishlistItem.update({
+            where: { id: it.id },
+            data: {
+              title: snap.title,
+              handle: snap.handle,
+              variantTitle: snap.variantTitle,
+              sku: snap.sku,
+              price: snap.price,
+              imageUrl: snap.imageUrl,
+            },
+          });
+        }).filter(Boolean) as any[];
+
+        if (updates.length) {
+          await prisma.$transaction(updates);
+        }
+
+        // Merge snapshots into the response (no need to re-query)
+        for (const it of items) {
+          if (!needsBackfill(it)) continue;
+          const snap = snapshotByVariantId.get(it.variantId);
+          if (!snap) continue;
+
+          it.title = snap.title;
+          it.handle = snap.handle;
+          it.variantTitle = snap.variantTitle;
+          it.sku = snap.sku;
+          it.price = snap.price;
+          it.imageUrl = snap.imageUrl;
+        }
+      } catch {
+        // Swallow lookup failures; return base items so the page still loads
+      }
+    }
+  }
 
   return { wishlist, items };
 };
@@ -135,11 +278,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     if (!itemId) return { ok: false, error: "Missing itemId" };
 
     // Ensure item belongs to wishlist
-    await prisma.wishlistItem.update({
-      where: { id: itemId },
+    const updated = await prisma.wishlistItem.updateMany({
+      where: { id: itemId, wishlistId: wishlist.id },
       data: { quantity },
     });
 
+    if (!updated.count) return { ok: false, error: "Item not found" };
     return { ok: true };
   }
 
@@ -147,10 +291,12 @@ export const action = async ({ request }: ActionFunctionArgs) => {
     const itemId = String(body?.itemId || "");
     if (!itemId) return { ok: false, error: "Missing itemId" };
 
-    await prisma.wishlistItem.delete({
-      where: { id: itemId },
+    // Ensure item belongs to wishlist
+    const deleted = await prisma.wishlistItem.deleteMany({
+      where: { id: itemId, wishlistId: wishlist.id },
     });
 
+    if (!deleted.count) return { ok: false, error: "Item not found" };
     return { ok: true };
   }
 
