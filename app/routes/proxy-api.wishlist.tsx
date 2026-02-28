@@ -43,7 +43,9 @@ async function createDraftOrder(opts: {
   shopDomain: string;
   accessToken: string;
   customerGid: string | null;
+  tags?: string[];
   note: string | null;
+  shippingAddress?: any;
   lineItems: Array<{ variantId: string; quantity: number }>;
 }) {
   const mutation = `
@@ -160,6 +162,45 @@ async function fetchVariantSnapshots(shopDomain: string, accessToken: string, va
   }
 
   return map;
+}
+
+async function fetchCustomerForDraft(shopDomain: string, accessToken: string, customerGid: string) {
+  const query = `
+    query CustomerForDraft($id: ID!) {
+      customer(id: $id) {
+        id
+        tags
+        defaultAddress {
+          countryCodeV2
+          country
+          firstName
+          lastName
+          company
+          address1
+          address2
+          city
+          province
+          zip
+          phone
+        }
+      }
+    }
+  `;
+
+  const res = await fetch(`https://${shopDomain}/admin/api/2024-10/graphql.json`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shopify-Access-Token": accessToken,
+    },
+    body: JSON.stringify({ query, variables: { id: customerGid } }),
+  });
+
+  const text = await res.text().catch(() => "");
+  if (!res.ok) throw new Error(`Customer fetch failed (${res.status}): ${text || "no body"}`);
+
+  const json = text ? JSON.parse(text) : {};
+  return json?.data?.customer || null;
 }
 
 function needsBackfill(it: {
@@ -409,6 +450,8 @@ export const action = async ({ request }: ActionFunctionArgs) => {
         return { ok: false, error: "Wishlist has no items" };
       }
 
+      
+
       // Need offline token to call Admin API
       const accessToken = session.accessToken;
       if (!accessToken) {
@@ -421,11 +464,51 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
       const customerGid = toCustomerGid(shopifyCustomerId); // cid is numeric string -> Customer GID
 
+      const customer = customerGid
+  ? await fetchCustomerForDraft(shopDomain, accessToken, customerGid).catch(() => null)
+  : null;
+
+const country =
+  customer?.defaultAddress?.countryCodeV2 ||
+  customer?.defaultAddress?.country ||
+  null;
+
+  const tags = [
+  "OU-WISHLIST-SUBMISSION",
+  country ? `COUNTRY_${country}` : null,
+  ...(Array.isArray(customer?.tags) ? customer.tags : []),
+].filter(Boolean);
+
+// Shipping address to imprint country / address onto draft
+const shippingAddress = customer?.defaultAddress
+  ? {
+      firstName: customer.defaultAddress.firstName || undefined,
+      lastName: customer.defaultAddress.lastName || undefined,
+      company: customer.defaultAddress.company || undefined,
+      address1: customer.defaultAddress.address1 || undefined,
+      address2: customer.defaultAddress.address2 || undefined,
+      city: customer.defaultAddress.city || undefined,
+      province: customer.defaultAddress.province || undefined,
+      zip: customer.defaultAddress.zip || undefined,
+      countryCode: customer.defaultAddress.countryCodeV2 || undefined,
+      phone: customer.defaultAddress.phone || undefined,
+    }
+  : undefined;
+
+// Combine notes: customer note + metadata (optional)
+const finalNote = [
+  note || null,
+  country ? `Customer country: ${country}` : null,
+  `Submitted via Wishlists page`,
+].filter(Boolean).join("\n");
+
       const draft = await createDraftOrder({
         shopDomain,
         accessToken,
         customerGid,
-        note,
+        note: finalNote,
+        tags,
+        shippingAddress,
         lineItems: items.map((it) => ({
           variantId: it.variantId,
           quantity: Math.max(1, Number(it.quantity) | 0),
