@@ -507,7 +507,7 @@ const finalNote = [
         accessToken,
         customerGid,
         note: finalNote,
-        tags,
+        tags: ['WISHLIST SUBMISSION'],
         shippingAddress,
         lineItems: items.map((it) => ({
           variantId: it.variantId,
