@@ -28,6 +28,75 @@ async function getOfflineAccessToken(shopDomain: string) {
   return sess?.accessToken || null;
 }
 
+function toCustomerGid(raw: string) {
+  const s = String(raw || "").trim();
+  if (!s) return null;
+  if (s.startsWith("gid://")) return s;
+  if (/^\d+$/.test(s)) return `gid://shopify/Customer/${s}`;
+  return s;
+}
+
+async function createDraftOrder(opts: {
+  shopDomain: string;
+  accessToken: string;
+  customerGid: string | null;
+  note: string | null;
+  lineItems: Array<{ variantId: string; quantity: number }>;
+}) {
+  const mutation = `
+    mutation DraftOrderCreate($input: DraftOrderInput!) {
+      draftOrderCreate(input: $input) {
+        draftOrder {
+          id
+          invoiceUrl
+        }
+        userErrors {
+          field
+          message
+        }
+      }
+    }
+  `;
+
+  const input: any = {
+    lineItems: opts.lineItems.map((li) => ({
+      variantId: li.variantId,
+      quantity: li.quantity,
+    })),
+  };
+
+  // Attach customer + note if available
+  if (opts.customerGid) input.customerId = opts.customerGid;
+  if (opts.note) input.note = opts.note;
+
+  const res = await fetch(`https://${opts.shopDomain}/admin/api/2024-10/graphql.json`, {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Shopify-Access-Token": opts.accessToken,
+    },
+    body: JSON.stringify({ query: mutation, variables: { input } }),
+  });
+
+  const text = await res.text().catch(() => "");
+  const json = text ? JSON.parse(text) : null;
+
+  if (!res.ok) {
+    throw new Error(`Draft order create failed (${res.status}): ${text || "no body"}`);
+  }
+
+  const payload = json?.data?.draftOrderCreate;
+  const errs = payload?.userErrors || [];
+  if (errs.length) {
+    throw new Error(errs.map((e: any) => e.message).join(" | "));
+  }
+
+  const draftOrder = payload?.draftOrder;
+  if (!draftOrder?.id) throw new Error("Draft order not returned");
+
+  return { id: draftOrder.id as string, invoiceUrl: draftOrder.invoiceUrl as string | null };
+}
+
 type Snapshot = {
   title: string | null;
   handle: string | null;
@@ -298,6 +367,81 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
     if (!deleted.count) return { ok: false, error: "Item not found" };
     return { ok: true };
+  }
+
+    if (op === "submit") {
+    const note = typeof body?.note === "string" ? body.note.trim() : null;
+
+    // Create submission record first
+    const submission = await prisma.wishlistSubmission.create({
+      data: {
+        shopId: resolved.shopId,
+        wishlistId: wishlist.id,
+        customerId: resolved.customerPk,
+        status: "created",
+        note: note || null,
+      },
+      select: { id: true, status: true },
+    });
+
+    try {
+      // Pull items
+      const items = await prisma.wishlistItem.findMany({
+        where: { wishlistId: wishlist.id },
+        select: { variantId: true, quantity: true },
+      });
+
+      if (!items.length) {
+        await prisma.wishlistSubmission.update({
+          where: { id: submission.id },
+          data: { status: "failed", note: note || "Wishlist empty" },
+        });
+        return { ok: false, error: "Wishlist has no items" };
+      }
+
+      // Need offline token to call Admin API
+      const accessToken = await getOfflineAccessToken(shopDomain);
+      if (!accessToken) {
+        await prisma.wishlistSubmission.update({
+          where: { id: submission.id },
+          data: { status: "failed", note: note || "Missing offline token" },
+        });
+        return { ok: false, error: "Missing app access token" };
+      }
+
+      const customerGid = toCustomerGid(shopifyCustomerId); // cid is numeric string -> Customer GID
+
+      const draft = await createDraftOrder({
+        shopDomain,
+        accessToken,
+        customerGid,
+        note,
+        lineItems: items.map((it) => ({
+          variantId: it.variantId,
+          quantity: Math.max(1, Number(it.quantity) | 0),
+        })),
+      });
+
+      // Persist draft order id
+      await prisma.wishlistSubmission.update({
+        where: { id: submission.id },
+        data: {
+          draftOrderId: draft.id,
+          status: "created",
+        },
+      });
+
+      return { ok: true, submissionId: submission.id, draftOrderId: draft.id, invoiceUrl: draft.invoiceUrl };
+    } catch (e: any) {
+      const msg = String(e?.message || e || "Submit failed");
+
+      await prisma.wishlistSubmission.update({
+        where: { id: submission.id },
+        data: { status: "failed", note: note ? `${note}\n\n${msg}` : msg },
+      });
+
+      return { ok: false, error: msg };
+    }
   }
 
   return { ok: false, error: "Unknown op" };
