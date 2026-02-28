@@ -1,5 +1,8 @@
 import type { LoaderFunctionArgs, ActionFunctionArgs } from "react-router";
 import { prisma } from "../db.server";
+import { authenticate } from "../shopify.server";
+
+// optionally assert session.shop === shopDomain
 
 async function resolveShopAndCustomer(shopDomain: string, shopifyCustomerId: string) {
   const shopRow = await prisma.shop.findUnique({
@@ -278,13 +281,20 @@ export const loader = async ({ request }: LoaderFunctionArgs) => {
 };
 
 export const action = async ({ request }: ActionFunctionArgs) => {
+  const auth = await authenticate.public.appProxy(request).catch(() => null);
+  const session = auth?.session;
+
+  if (!session?.shop || !session?.accessToken) {
+    return { ok: false, error: "Unauthorized app proxy request" };
+  }
+
+  const shopDomain = session.shop;
+
   if (request.method.toUpperCase() !== "POST") {
     throw new Response("Method Not Allowed", { status: 405 });
   }
 
   const url = new URL(request.url);
-
-  const shopDomain = url.searchParams.get("shop");
   const shopifyCustomerId = url.searchParams.get("cid");
 
   if (!shopDomain || !shopifyCustomerId) {
@@ -400,7 +410,7 @@ export const action = async ({ request }: ActionFunctionArgs) => {
       }
 
       // Need offline token to call Admin API
-      const accessToken = await getOfflineAccessToken(shopDomain);
+      const accessToken = session.accessToken;
       if (!accessToken) {
         await prisma.wishlistSubmission.update({
           where: { id: submission.id },
