@@ -64,11 +64,20 @@ async function createDraftOrder(opts: {
   `;
 
   const input: any = {
-    lineItems: opts.lineItems.map((li) => ({
-      variantId: li.variantId,
-      quantity: li.quantity,
-    })),
-  };
+  lineItems: opts.lineItems.map((li) => ({
+    variantId: li.variantId,
+    quantity: li.quantity,
+  })),
+
+  note: opts.note || undefined,
+  tags: opts.tags?.length ? opts.tags : undefined,
+
+  // IMPORTANT: attach customer the modern way
+  purchasingEntity: opts.customerGid ? { customerId: opts.customerGid } : undefined,
+
+  // IMPORTANT: tells Shopify to apply the customer default address
+  useCustomerDefaultAddress: true,
+};
 
   // Attach customer + note if available
   if (opts.customerGid) input.customerId = opts.customerGid;
@@ -482,16 +491,18 @@ const country =
 // Shipping address to imprint country / address onto draft
 const shippingAddress = customer?.defaultAddress
   ? {
-      firstName: customer.defaultAddress.firstName || undefined,
-      lastName: customer.defaultAddress.lastName || undefined,
-      company: customer.defaultAddress.company || undefined,
-      address1: customer.defaultAddress.address1 || undefined,
-      address2: customer.defaultAddress.address2 || undefined,
-      city: customer.defaultAddress.city || undefined,
-      province: customer.defaultAddress.province || undefined,
-      zip: customer.defaultAddress.zip || undefined,
-      countryCode: customer.defaultAddress.countryCodeV2 || undefined,
-      phone: customer.defaultAddress.phone || undefined,
+      firstName: customer.defaultAddress.firstName ?? undefined,
+      lastName: customer.defaultAddress.lastName ?? undefined,
+      company: customer.defaultAddress.company ?? undefined,
+      address1: customer.defaultAddress.address1 ?? undefined,
+      address2: customer.defaultAddress.address2 ?? undefined,
+      city: customer.defaultAddress.city ?? undefined,
+      zip: customer.defaultAddress.zip ?? undefined,
+
+      // IMPORTANT FIELD NAMES
+      countryCode: customer.defaultAddress.countryCodeV2 ?? undefined,
+      provinceCode: customer.defaultAddress.provinceCode ?? undefined,
+      phone: customer.defaultAddress.phone ?? undefined,
     }
   : undefined;
 
