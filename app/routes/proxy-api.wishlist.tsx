@@ -63,7 +63,7 @@ async function createDraftOrder(opts: {
     }
   `;
 
-  const input: any = {
+  const input = {
   lineItems: opts.lineItems.map((li) => ({
     variantId: li.variantId,
     quantity: li.quantity,
@@ -72,15 +72,17 @@ async function createDraftOrder(opts: {
   note: opts.note || undefined,
   tags: opts.tags?.length ? opts.tags : undefined,
 
-  // IMPORTANT: attach customer the modern way
+  // ✅ Use ONLY purchasingEntity
   purchasingEntity: opts.customerGid ? { customerId: opts.customerGid } : undefined,
 
-  // IMPORTANT: tells Shopify to apply the customer default address
+  // optional, applies default customer address when possible
   useCustomerDefaultAddress: true,
+
+  // optional manual address (only if you want to override)
+  shippingAddress: opts.shippingAddress || undefined,
 };
 
   // Attach customer + note if available
-  if (opts.customerGid) input.customerId = opts.customerGid;
   if (opts.note) input.note = opts.note;
 
   const res = await fetch(`https://${opts.shopDomain}/admin/api/2024-10/graphql.json`, {
