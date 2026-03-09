@@ -342,9 +342,9 @@ export const action = async ({ request }: ActionFunctionArgs) => {
 
   const shopDomain = session.shop;
 
-  if (request.method.toUpperCase() !== "POST") {
-    throw new Response("Method Not Allowed", { status: 405 });
-  }
+ if (!["POST", "PATCH"].includes(request.method.toUpperCase())) {
+  throw new Response("Method Not Allowed", { status: 405 });
+}
 
   const url = new URL(request.url);
   const shopifyCustomerId = url.searchParams.get("cid");
